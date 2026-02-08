@@ -1,0 +1,135 @@
+--label:クリッピング
+--information:SAM3で生成したマスク動画を使ってアルファ(透明度)を作成
+--script:lua
+
+--file@path:マスク動画ファイル
+--track@offset:オフセット,0,50000,0,0.001
+--check@invert:反転,false
+--value@mask_src_start:元動画開始秒,0
+--value@mask_src_end:元動画終了秒,0
+
+local mod = obj.module("sam3mask")
+
+local base, bw, bh = obj.getpixeldata("object")
+
+obj.setoption("drawtarget","tempbuffer")
+
+-- マスク動画が未指定なら何もしない
+if path == nil or path == "" then
+  obj.setoption("drawtarget","framebuffer")
+  obj.putpixeldata("object", base, bw, bh, "rgba")
+  return
+end
+
+-- ------------------------------------------------------------
+-- 同期方針:
+--  1) 「動画ファイル」効果の現在値(再生位置/再生速度)から “元動画の現在時刻” を推定
+--  2) マスク動画は「元動画開始秒(mask_src_start)」を基準に生成されているので
+--     mask_t = (src_t - mask_src_start) + offset でシーク
+--  3) マスク範囲外は (0..mask_src_end-mask_src_start) にクランプ
+-- ------------------------------------------------------------
+
+local function tonumber_safe(v)
+  if v == nil then return nil end
+  local n = tonumber(v)
+  return n
+end
+
+local function parse_two_numbers_csv(s)
+  if s == nil then return nil, nil end
+  -- 例: "0.000,0.733,再生範囲,0" の先頭2つだけ読む
+  local a, b = tostring(s):match("^%s*([%+%-]?%d*%.?%d+)%s*,%s*([%+%-]?%d*%.?%d+)")
+  if a == nil then return nil, nil end
+  return tonumber(a), tonumber(b)
+end
+
+-- obj.getvalue の互換吸収（環境によっては第2引数が数値(time)を要求して落ちる）
+-- なので「失敗しても例外を出さず nil を返す」+「引数個数違いを試す」。
+local function safe_call(f)
+  local ok, v = pcall(f)
+  if ok then return v end
+  return nil
+end
+
+local function get_effect_item_value(effect_name, item_name)
+  local t = obj.time
+  -- 試行順：
+  -- 1) (effect,item,time,section)
+  -- 2) (effect,item,time)
+  -- 3) (effect,item)
+  -- 4) まれに順序が逆な実装向け (item,effect, ...)
+  local v =
+    safe_call(function() return obj.getvalue(effect_name, item_name, t, 0) end) or
+    safe_call(function() return obj.getvalue(effect_name, item_name, t) end) or
+    safe_call(function() return obj.getvalue(effect_name, item_name) end) or
+    safe_call(function() return obj.getvalue(item_name, effect_name, t, 0) end) or
+    safe_call(function() return obj.getvalue(item_name, effect_name, t) end) or
+    safe_call(function() return obj.getvalue(item_name, effect_name) end)
+  return v
+end
+
+local function get_video_playback_range()
+  -- 日本語UI/英語UIの両対応（取れた方を使う）
+  local s = get_effect_item_value("動画ファイル", "再生位置")
+  if s == nil then s = get_effect_item_value("Video File", "Playback") end
+
+  -- 返り値が number / string / その他でも極力拾う
+  if type(s) == "number" then
+    return s, nil
+  end
+  return parse_two_numbers_csv(s)
+end
+
+local function get_video_speed_percent()
+  local s = get_effect_item_value("動画ファイル", "再生速度")
+  if s == nil then s = get_effect_item_value("Video File", "Playback Speed") end
+  local v = tonumber_safe(s) or (type(s) == "number" and s) or 100.0
+  if v <= 0 then v = 100.0 end
+  return v
+end
+
+-- 元動画の開始秒（マスク生成時の基準）。未設定なら0扱い。
+local src0 = tonumber_safe(mask_src_start) or 0.0
+local src1 = tonumber_safe(mask_src_end) or 0.0
+
+-- 現在の「動画ファイル」効果が示す再生範囲/速度を取得
+local pb0, pb1 = get_video_playback_range()
+local sp = get_video_speed_percent()
+
+-- フォールバック（再生位置が取れない場合は従来挙動）
+local src_t
+if pb0 ~= nil then
+  src_t = pb0 + (obj.time * (sp / 100.0))
+else
+  src_t = (obj.time % obj.totaltime)
+end
+
+-- マスク側シーク時刻（秒）
+local t = (src_t - src0) + (tonumber_safe(offset) or 0.0)
+
+-- マスク範囲外はクランプ（生成範囲だけマスク保持の方針）
+if src1 > src0 then
+  local dur = src1 - src0
+  if t < 0 then t = 0 end
+  if t > dur then t = dur end
+else
+  if t < 0 then t = 0 end
+end
+
+obj.load("movie", path, t)
+
+-- RGBAデータ取得
+local mask, mw, mh = obj.getpixeldata("object")
+
+local w = bw
+local h = bh
+if mw ~= bw or mh ~= bh then
+  w = math.min(bw, mw)
+  h = math.min(bh, mh)
+end
+
+mod.apply_alpha(base, mask, w, h, invert)
+
+-- 結果を書き戻す
+obj.setoption("drawtarget","framebuffer")
+obj.putpixeldata("object", base, bw, bh, "rgba")

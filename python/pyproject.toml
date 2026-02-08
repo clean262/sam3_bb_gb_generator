@@ -1,0 +1,73 @@
+[project]
+name = "sam3-video-segmentation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "accelerate>=1.11.0",
+    "gradio>=5.49.1",
+    "imageio-ffmpeg>=0.6.0",
+    "imageio[pyav]>=2.37.2",
+    "kernels>=0.11.0",
+    "opencv-python>=4.12.0.88",
+    "spaces>=0.42.1",
+    "torch==2.8.0",
+    "torchvision>=0.23.0",
+    "transformers",
+]
+
+[tool.ruff]
+line-length = 119
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # missing-trailing-comma
+    "D203",   # one-blank-line-before-class
+    "D213",   # multi-line-summary-second-line
+    "E501",   # line-too-long
+    "SIM117", # multiple-with-statements
+    #
+    "D100",    # undocumented-public-module
+    "D101",    # undocumented-public-class
+    "D102",    # undocumented-public-method
+    "D103",    # undocumented-public-function
+    "D104",    # undocumented-public-package
+    "D105",    # undocumented-magic-method
+    "D107",    # undocumented-public-init
+    "EM101",   # raw-string-in-exception
+    "FBT001",  # boolean-type-hint-positional-argument
+    "FBT002",  # boolean-default-value-positional-argument
+    "PGH003",  # blanket-type-ignore
+    "PLR0913", # too-many-arguments
+    "PLR0915", # too-many-statements
+    "TRY003",  # raise-vanilla-args
+]
+unfixable = [
+    "F401", # unused-import
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = ["T201", "T203"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.uv.sources]
+transformers = { git = "https://github.com/huggingface/transformers.git", rev = "69f003696b" }
+
+torch = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'win32' or sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

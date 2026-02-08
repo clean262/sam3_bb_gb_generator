@@ -1,0 +1,93 @@
+--[[
+SAM3color.anm2
+前景(αまたはマスク)に色を割り当てる
+
+・SAM3mask の後ろに入れるのがおすすめ（透明挿入のとき）
+・GB/BBなどαが無い場合は「マスク動画を使う」をONにして mask_path を指定
+]]
+
+--color@fg_col:前景色,0x00ff00
+--track@strength:塗り強さ,0,100,100
+--check@replace_rgb:RGBを置換(OFFなら上塗り),0
+--check@replace_alpha:αも置換(マスク/入力α),0
+--check@invert:反転,0
+--check@use_mask_file:マスク動画を使う,0
+--file@mask_path:マスク動画ファイル
+
+--[[pixelshader@sam3_colorize:
+Texture2D t0 : register(t0); // base
+Texture2D t1 : register(t1); // mask (optional)
+SamplerState s0 : register(s0);
+
+// c0 = (r,g,b,strength)
+// c1 = (use_mask, invert, replace_rgb, replace_alpha)
+float4 c0 : register(c0);
+float4 c1 : register(c1);
+
+float4 sam3_colorize(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
+{
+    float4 base = t0.Sample(s0, uv);
+
+    float m = base.a; // default: input alpha
+    if (c1.x > 0.5) {
+        float4 mk = t1.Sample(s0, uv);
+        // マスク動画がRGBに入っているケースを想定して最大値
+        m = max(mk.r, max(mk.g, mk.b));
+        // αに入っている場合は mk.a を使ってもOK（必要ならここを書き換え）
+        // m = mk.a;
+    }
+
+    if (c1.y > 0.5) m = 1.0 - m;
+
+    float a = saturate(m);
+    float strength = saturate(c0.a);
+
+    float3 fg = c0.rgb;
+
+    // RGB: 置換 or 上塗り
+    float3 out_rgb = (c1.z > 0.5) ? fg : lerp(base.rgb, fg, a * strength);
+
+    // α: 置換するなら a、しないなら元のα
+    float out_a = (c1.w > 0.5) ? a : base.a;
+
+    return float4(out_rgb, out_a);
+}
+]]
+
+local function color_to_rgb01(c)
+    local r = math.floor(c / 65536) % 256
+    local g = math.floor(c /   256) % 256
+    local b = math.floor(c        ) % 256
+    return r/255.0, g/255.0, b/255.0
+end
+
+local r,g,b = color_to_rgb01(fg_col or 0x00ff00)
+local s = (strength or 100) / 100.0
+
+-- 元画像退避
+obj.copybuffer("cache:sam3_base", "object")
+
+local use_mask = (use_mask_file == 1) and (mask_path ~= nil) and (mask_path ~= "")
+
+if use_mask then
+    -- “今の時刻”でマスク動画のフレームを読みたいので time を取る:contentReference[oaicite:1]{index=1}
+    local t = obj.getvalue("time") -- 秒
+    obj.load("movie", mask_path, t)
+    obj.copybuffer("cache:sam3_mask", "object")
+    -- 元画像に戻す
+    obj.copybuffer("object", "cache:sam3_base")
+else
+    -- ダミー（t1に何か入れておく）
+    obj.copybuffer("cache:sam3_mask", "cache:sam3_base")
+end
+
+local res = { "cache:sam3_base", "cache:sam3_mask" }
+local cst = {
+    r, g, b, s,
+    use_mask and 1 or 0,
+    (invert == 1) and 1 or 0,
+    (replace_rgb == 1) and 1 or 0,
+    (replace_alpha == 1) and 1 or 0
+}
+
+obj.pixelshader("sam3_colorize", "object", res, cst)
