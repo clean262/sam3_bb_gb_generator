@@ -1,0 +1,76 @@
+name: Release (tag -> build -> zip -> GitHub Release)
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "*.*.*"
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure (CMake / VS2022 x64)
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build (Release)
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Package (AviUtl2 layout)
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+
+          # ビルド成果物の存在チェック
+          if (!(Test-Path "build/Release/sam3.aux2")) { throw "Missing build/Release/sam3.aux2" }
+          if (!(Test-Path "build/Release/sam3mask.mod2")) { throw "Missing build/Release/sam3mask.mod2" }
+          if (!(Test-Path "lua/SAM3mask.anm2")) { throw "Missing lua/SAM3mask.anm2" }
+          if (!(Test-Path "python")) { throw "Missing python directory" }
+
+          $dist = "dist"
+          if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
+
+          New-Item -ItemType Directory -Force -Path "$dist/aviutl2/Plugin/SAM3" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$dist/aviutl2/Script/SAM3" | Out-Null
+
+          # Plugin 側
+          Copy-Item "build/Release/sam3.aux2" "$dist/aviutl2/Plugin/SAM3/" -Force
+          Copy-Item -Recurse "python" "$dist/aviutl2/Plugin/SAM3/" -Force
+
+          # Script 側（SAM3color.anm2 は入れない）
+          Copy-Item "lua/SAM3mask.anm2" "$dist/aviutl2/Script/SAM3/" -Force
+          Copy-Item "build/Release/sam3mask.mod2" "$dist/aviutl2/Script/SAM3/" -Force
+
+          # （任意）README を同梱したいなら
+          if (Test-Path "README.md") { Copy-Item "README.md" "$dist/" -Force }
+
+          $zip = "SAM3_${tag}_win64.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$dist/*" -DestinationPath $zip
+
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Out-File -Encoding ascii "${zip}.sha256"
+
+      - name: Create/Update GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SAM3_${{ github.ref_name }}_win64.zip
+            SAM3_${{ github.ref_name }}_win64.zip.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
