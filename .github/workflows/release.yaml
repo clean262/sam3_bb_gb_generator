@@ -57,6 +57,10 @@ jobs:
           $env:UV_INSTALL_DIR = $uvDir.Path
           $env:UV_NO_MODIFY_PATH = "1"   # PATH変更を抑止
           irm https://astral.sh/uv/install.ps1 | iex
+          $uvx = Join-Path $uvDir.Path "uvx.exe"
+          $uvw = Join-Path $uvDir.Path "uvw.exe"
+          if (Test-Path $uvx) { Remove-Item $uvx -Force }
+          if (Test-Path $uvw) { Remove-Item $uvw -Force }
 
           if (!(Test-Path (Join-Path $uvDir.Path "uv.exe"))) {
             throw "Failed to install uv.exe into $($uvDir.Path)"
