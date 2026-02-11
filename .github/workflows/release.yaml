@@ -41,6 +41,8 @@ jobs:
           if (!(Test-Path "build/Release/sam3mask.mod2")) { throw "Missing build/Release/sam3mask.mod2" }
           if (!(Test-Path "lua/SAM3mask.anm2")) { throw "Missing lua/SAM3mask.anm2" }
           if (!(Test-Path "python")) { throw "Missing python directory" }
+          if (!(Test-Path "installer/install.ps1")) { throw "Missing installer/install.ps1" }
+          if (!(Test-Path "installer/install.cmd")) { throw "Missing installer/install.cmd" }
 
           $dist = "dist"
           if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
@@ -72,6 +74,10 @@ jobs:
 
           # （任意）README を同梱したいなら
           if (Test-Path "README.md") { Copy-Item "README.md" "$dist/" -Force }
+
+          # インストーラー同梱（ZIP展開後に install.cmd を実行してもらう）
+          Copy-Item "installer/install.ps1" "$dist/install.ps1" -Force
+          Copy-Item "installer/install.cmd" "$dist/install.cmd" -Force
 
           $zip = "SAM3_${tag}_win64.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
