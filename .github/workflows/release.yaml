@@ -35,6 +35,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
+          $zipBase = "SAM3_win64"
 
           # ビルド成果物の存在チェック
           if (!(Test-Path "build/Release/sam3.aux2")) { throw "Missing build/Release/sam3.aux2" }
@@ -47,15 +48,16 @@ jobs:
           $dist = "dist"
           if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
 
-          New-Item -ItemType Directory -Force -Path "$dist/aviutl2/Plugin/SAM3" | Out-Null
-          New-Item -ItemType Directory -Force -Path "$dist/aviutl2/Script/SAM3" | Out-Null
+          $root = Join-Path $dist $zipBase
+          New-Item -ItemType Directory -Force -Path "$root/aviutl2/Plugin/SAM3" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$root/aviutl2/Script/SAM3" | Out-Null
 
           # Plugin 側
-          Copy-Item "build/Release/sam3.aux2" "$dist/aviutl2/Plugin/SAM3/" -Force
-          Copy-Item -Recurse "python" "$dist/aviutl2/Plugin/SAM3/" -Force
+          Copy-Item "build/Release/sam3.aux2" "$root/aviutl2/Plugin/SAM3/" -Force
+          Copy-Item -Recurse "python" "$root/aviutl2/Plugin/SAM3/" -Force
 
           # 最新 uv.exe を python フォルダへ入れる
-          $uvDir = Resolve-Path "$dist/aviutl2/Plugin/SAM3/python"
+          $uvDir = Resolve-Path "$root/aviutl2/Plugin/SAM3/python"
           $env:UV_INSTALL_DIR = $uvDir.Path
           $env:UV_NO_MODIFY_PATH = "1"   # PATH変更を抑止
           irm https://astral.sh/uv/install.ps1 | iex
@@ -69,19 +71,21 @@ jobs:
           }
 
           # Script 側（SAM3color.anm2 は入れない）
-          Copy-Item "lua/SAM3mask.anm2" "$dist/aviutl2/Script/SAM3/" -Force
-          Copy-Item "build/Release/sam3mask.mod2" "$dist/aviutl2/Script/SAM3/" -Force
+          Copy-Item "lua/SAM3mask.anm2" "$root/aviutl2/Script/SAM3/" -Force
+          Copy-Item "build/Release/sam3mask.mod2" "$root/aviutl2/Script/SAM3/" -Force
 
           # （任意）README を同梱したいなら
-          if (Test-Path "README.md") { Copy-Item "README.md" "$dist/" -Force }
+          if (Test-Path "README.md") { Copy-Item "README.md" "$root/" -Force }
 
           # インストーラー同梱（ZIP展開後に install.cmd を実行してもらう）
-          Copy-Item "installer/install.ps1" "$dist/install.ps1" -Force
-          Copy-Item "installer/install.cmd" "$dist/install.cmd" -Force
+          Copy-Item "installer/install.ps1" "$root/install.ps1" -Force
+          Copy-Item "installer/install.cmd" "$root/install.cmd" -Force
 
-          $zip = "SAM3_${tag}_win64.zip"
+          $zip = "${zipBase}.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "$dist/*" -DestinationPath $zip
+          Push-Location $dist
+          Compress-Archive -Path $zipBase -DestinationPath "../$zip"
+          Pop-Location
 
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           "$hash  $zip" | Out-File -Encoding ascii "${zip}.sha256"
@@ -90,7 +94,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            SAM3_${{ github.ref_name }}_win64.zip
-            SAM3_${{ github.ref_name }}_win64.zip.sha256
+            SAM3_win64.zip
+            SAM3_win64.zip.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
