@@ -89,9 +89,21 @@ jobs:
 
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           "$hash  $zip" | Out-File -Encoding ascii "${zip}.sha256"
+          
+      - name: Upload Artifacts (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAM3_win64-${{ github.ref_name }}-${{ github.run_number }}
+          path: |
+            SAM3_win64.zip
+            SAM3_win64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Create/Update GitHub Release and upload assets
         uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
             SAM3_win64.zip
