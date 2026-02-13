@@ -53,19 +53,8 @@ end
 
 local function get_effect_item_value(effect_name, item_name)
   local t = obj.time
-  -- 試行順：
-  -- 1) (effect,item,time,section)
-  -- 2) (effect,item,time)
-  -- 3) (effect,item)
-  -- 4) まれに順序が逆な実装向け (item,effect, ...)
-  local v =
-    safe_call(function() return obj.getvalue(effect_name, item_name, t, 0) end) or
-    safe_call(function() return obj.getvalue(effect_name, item_name, t) end) or
-    safe_call(function() return obj.getvalue(effect_name, item_name) end) or
-    safe_call(function() return obj.getvalue(item_name, effect_name, t, 0) end) or
-    safe_call(function() return obj.getvalue(item_name, effect_name, t) end) or
-    safe_call(function() return obj.getvalue(item_name, effect_name) end)
-  return v
+  -- 確定: obj.getvalue(effect,item,time,section)
+  return safe_call(function() return obj.getvalue(effect_name, item_name, t, 0) end)
 end
 
 local function get_video_playback_range()
