@@ -1385,9 +1385,9 @@ def main():
         app_state = gr.State(state0)
 
         gr.Markdown("## SAM3 BB/GB Generator")
-        gr.Markdown("### 更新先: [GitHub](https://github.com/clean262/sam3_bb_gb_generator), エラー報告・要望は[Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)へ, 作者連絡先: [Twitter](https://x.com/clean123525)")
+        gr.Markdown("### 更新・使い方: [GitHub](https://github.com/clean262/sam3_bb_gb_generator), エラー報告・要望は[Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)へ, 作者連絡先: [Twitter](https://x.com/clean123525)")
         gr.Markdown("### 紹介動画: [ニコニコ動画](https://www.nicovideo.jp/watch/sm45931905),  解説動画: Coming Soon...")
-        gr.Markdown("### 作成した動画は[親作品登録](https://www.nicovideo.jp/watch/sm45931905)いただけると嬉しいです。動画を見に行きます。")
+        gr.Markdown("### 作成した動画は[親作品登録](https://www.nicovideo.jp/watch/sm45931905)いただけると開発の励みになります。動画を見に行きます。")
         # gr.Markdown(f"- job_id: `{job_id}`")
         # gr.Markdown(f"- source_video_path: `{src}`")
         # gr.Markdown(f"- segment: `{seginfo.start_sec:.3f}` sec → `{seginfo.end_sec:.3f}` sec")
