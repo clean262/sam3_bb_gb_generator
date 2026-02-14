@@ -106,10 +106,12 @@ access tokenを[発行](https://huggingface.co/settings/tokens)し
 ここで発行したtokenは一度しか表示されないので、保存し忘れた場合新たなtokenを作成してください。<br>
 <img src="assets/token.png?raw=true" alt="setting" height="320">
 
-取得したトークンをターミナル等のアプリで、以下のコマンドで入力してください。<br>
+[プラグインのインストール](##プラグインのインストール)からプラグインをインストール後、
+取得したトークンをターミナル等のアプリで、以下のコマンドを1行ずつ入力してください。<br>
 Add token as git credential?にはnでOKです。<br>
 ```bash
-hf auth login　
+cd C:\ProgramData\aviutl2\Plugin\SAM3\python
+.\uv.exe run hf auth login
 ```
 
 ## プラグインのインストール
