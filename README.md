@@ -92,6 +92,15 @@ nvidia-smi
 ```
 上記コマンドをターミナル等のアプリで入力した際に、CUDA Version: 12.6 以上の表記が出ていればOKです。<br>
 **既にNvidia driverをインストールされている方でもCUDA Version: 12.6 以上の表記が出るかは確認してください**
+
+## gitのインストール
+ターミナル等のアプリで以下のコマンドを入力し、gitがインストール済みと確認できる方は飛ばしてください
+```bash
+git --version
+```
+エラーが出る方は元々インストールされてませんので、この[ページ](https://prog-8.com/docs/git-env-win)に従ってgitをインストールしてください。<br>
+サイト内での`2. Gitの初期設定`まで実行していただければOKです。
+
 ## SAM3の利用登録
 [Hugging Face](https://huggingface.co/join)にアクセスし、アカウントを作成してください。<br>
 <img src="assets/sign_in.png?raw=true" alt="sign in" height="320">
@@ -108,14 +117,25 @@ access tokenを[発行](https://huggingface.co/settings/tokens)し
 
 すぐ下に記載のある[プラグインのインストール](##プラグインのインストール)からプラグインをインストール後(catalogからでもReleaseからでもどちらからでも大丈夫です)、<br>
 取得したトークンをターミナル等のアプリで、以下のコマンドを**1行ずつ**入力してください。<br>
+トークンを入力するタイミングは`Enter your token(input will not be visible):`の時です。<br>
+トークンはパスワードと同様、他人に見せてはならないものなので、入力しても何も表示されませんが入力されています。<br>
 Add token as git credential?にはnでOKです。<br>
 ```bash
 cd C:\ProgramData\aviutl2\Plugin\SAM3\python
 .\uv.exe run hf auth login
 ```
+トークンを登録できたかを確認するには以下のコマンドを1行ずつ入力してください。
+```bash
+cd C:\ProgramData\aviutl2\Plugin\SAM3\python
+.\uv.exe run python -c "from huggingface_hub import whoami; print(whoami())"
+```
+`{'type': 'user', 'id':`...のようになればOKです。
+
+SAM3の利用申請は、SAM3側が手動で許諾をとっているようです。<br>
+[こちら](https://huggingface.co/settings/gated-repo)でSAM3がAcceptedになっていれば承認されています。Pendingの場合、まだ保留中です。しばらくお待ちください。
 
 ## プラグインのインストール
-Nvidia driverのインストールとSAM3の利用登録を終えたら、プラグインのインストールには2種類のインストール方法があります。
+Nvidia driverのインストール、gitのインストールとSAM3の利用登録を終えたら、プラグインのインストールには2種類のインストール方法があります。
 
 ### Aviutl2-catalogからインストールする場合(**推奨**)
 [Aviutl2-catalog](https://github.com/Neosku/aviutl2-catalog)をダウンロードし、インストールボタンを押すだけで導入は完了です。
