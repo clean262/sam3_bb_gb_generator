@@ -132,7 +132,7 @@ cd C:\ProgramData\aviutl2\Plugin\SAM3\python
 `{'type': 'user', 'id':`...のようになればOKです。
 
 SAM3の利用申請は、SAM3側が手動で許諾をとっているようです。<br>
-[こちら](https://huggingface.co/settings/gated-repo)でSAM3がAcceptedになっていれば承認されています。Pendingの場合、まだ保留中です。しばらくお待ちください。
+[こちら](https://huggingface.co/settings/gated-repos)でSAM3がAcceptedになっていれば承認されています。Pendingの場合、まだ保留中です。しばらくお待ちください。
 
 ## プラグインのインストール
 Nvidia driverのインストール、gitのインストールとSAM3の利用登録を終えたら、プラグインのインストールには2種類のインストール方法があります。
