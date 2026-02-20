@@ -131,7 +131,7 @@ cd C:\ProgramData\aviutl2\Plugin\SAM3\python
 cd C:\ProgramData\aviutl2\Plugin\SAM3\python
 .\uv.exe run python -c "from huggingface_hub import whoami; print(whoami())"
 ```
-`{'type': 'user', 'id':`...のようになればOKです。
+`{'type': 'user', 'id':`...の後が自分が作成したhugging faceのアカウント名と一致し、最後の部分`'auth': {'type': 'access_token', 'accessToken': {'displayName':...`以降が自分の作成したトークンの名前、そして`role`が正しく`READ`になっていることを確認してください。<br>
 
 SAM3の利用申請は、SAM3側が手動で許諾をとっているようです。<br>
 [こちら](https://huggingface.co/settings/gated-repos)でSAM3がAcceptedになっていれば承認されています。Pendingの場合、まだ保留中です。しばらくお待ちください。
