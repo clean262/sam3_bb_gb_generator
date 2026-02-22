@@ -34,7 +34,8 @@
 
 開発状況等は作者[X: 旧twitter](https://x.com/clean123525)を参照してください。
 
-バグ報告や機能追加の要望、利用に際して分からない点がありましたら[Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)から気軽にお願いします。<br>
+バグ報告や機能追加の要望、利用に際して分からない点がありましたらまず本ページ下部にある Q&A セクションをご覧ください。<br>
+その上で分からないことがあればｍ[Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)から気軽にお願いします。<br>
 右上`New issue`ボタンから送れます。
 
 また本プラグインはコミュニティの発展のために、Aviutl2本体の[親作品登録](https://commons.nicovideo.jp/works/nc422952)を推奨しています。<br>
@@ -192,7 +193,121 @@ Object IDを指定することで、複数の物体を指定することも可�
 最後に、`Finish`を押すとAviutl2に切り抜き結果が自動挿入されます。<br>
 <img src="assets/how_to_use/result.png?raw=true" alt="term" height="640">
 
-## ライセンス
+# Q&A
+## カタログのダウンロード時に、5/5でエラーが出現する
+gitのインストールが出来ていないです
+この[ページ](https://prog-8.com/docs/git-env-win)に従ってgitをインストールしてください。<br>
+サイト内での`2. Gitの初期設定`まで実行していただければOKです。
+
+また、v0.0.5までにおいて、pythonとtorchのバージョン不整合によりダウンロード時にエラーが発生しておりました。<br>
+旧バージョンをご利用の方は最新バージョンにアップデートしてください。
+
+## web UIのURLが取得できない
+<img src="assets/q_and_a/web_ui.png" alt="setting" height="200"> <br>
+これは何らかの理由で, 切り抜き用の画面が開けないことを意味しています。<br>
+ここだけでは原因が分からないので、透過/BB/Gbを選択したSAM3 ウィンドウの一番下の箇所を参照してください。<br>
+**以下にメッセージごとの対処法を記載します。**
+
+## Model load failed:エラー
+発行したトークン周りで何かしらのエラーが生じています。<span style="color:red;">※(画像のエラーメッセージは1例です。類似のメッセージが出る場合もあります)</span>　<br>
+<img src="assets/q_and_a/model_load.png" alt="setting" height="200"> <br>
+様々な可能性が考えられますので、まず順番に以下の内容を確認してください
+
+1. SAM3がAcceptedされているか  
+   [こちら](https://huggingface.co/settings/gated-repos)でSAM3が`Accepted`になっているかを確認してください。<br> 
+   `pending`の場合は承認されるまで待ってください。<br> 
+
+2. 発行したトークンが`READ`権限を持つか  
+   [こちら](https://huggingface.co/settings/tokens)で発行したトークンのPermissionが`Fine-grained`ではなく`READ`になっているかを確認してください。<br> 
+   `Fine-Grained`になっている場合、新たに`READ`で作り直してください。<br>
+   `Fine-Grained`になっておりトークンを作り直す場合は以下のコマンドを1行ずつ入力しログアウトした後、再度導入方法に従ってトークンを登録してください。<br>
+   ```powershell
+   cd C:\ProgramData\aviutl2\Plugin\SAM3\python
+   .\uv.exe run hf auth logout
+   ```
+
+3. 正しくトークンが登録できているか  
+   以下のコマンドを1行ずつ入力してください。
+    ```powershell
+    cd C:\ProgramData\aviutl2\Plugin\SAM3\python
+    .\uv.exe run python -c "from huggingface_hub import whoami; print(whoami())"
+    ```
+   2つ目のコマンドを入力した後の出力において、`{'type': 'user', 'id':`...の後が自分が作成したhugging faceのアカウント名と一致し、  
+   最後の部分`'auth': {'type': 'access_token', 'accessToken': {'displayName':...`以降が自分の作成したトークンの名前、  
+   そして`role`が正しく`READ`になっていることを確認してください。<br>
+   正しくない場合は2. と同様にログアウトし、再度導入方法に従ってトークンを登録してください。
+
+4. 以前にHugging faceを利用されたことがある方に起きうるエラー<br>
+
+   環境変数に既に別のトークンが入っており、そのトークンにアクセス権限がないケースが考えられます。(環境変数に入っているトークンが今回設定したトークンより優先される)<br>
+   `[Environment]::GetEnvironmentVariable("HF_TOKEN", "User")`のコマンドの出力がある方が該当します。<br>
+
+   出力があった場合の解決策は環境変数を削除するないし、上書きするです。<br>
+   (双方とも以前作成していたであろうトークンは削除することになるので、以前用いていたHugging faceを用いたコードが動かなくなる可能性はあります。<br>
+   これを回避するには適切な権限を与えてあげてください。)<br>
+
+   削除する場合は以下のコマンドを入力してください<br>
+   `[Environment]::SetEnvironmentVariable("HF_TOKEN", $null, "User")`<br>
+
+   上書きする場合は以下のコマンドを入力してください。`YOUR_TOKEN_HERE`の部分に作成したトークンを入力してください<br>
+   `[Environment]::SetEnvironmentVariable("HF_TOKEN", "YOUR_TOKEN_HERE", "User")`<br>
+
+### このエラーの原因を確認する方法<br>
+`C:\ProgramData\aviutl2\Plugin\SAM3\Jobs`
+に日付時刻が記されたフォルダがあり、該当するフォルダを開いて下さい。<br>
+`python.log.txt`にエラーの原因が記載されています。<br>
+AIに質問 / [Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)で質問する際もこれをもとに質問してください
+
+## Loading video segment...から全然進まない
+初回利用時には3.5GBもの切り抜き用のSAM3モデルをダウンロードしています。時間がかかるのでそのまま待ってください<br>
+<img src="assets/q_and_a/loading.png" alt="setting" height="200">
+
+## python process exited before result.json was createdエラー
+<img src="assets/q_and_a/python_process_exited.png" alt="setting" height="200"> <br>
+
+このエラーが出るときは、カタログでのダウンロード時に自動で実行されるライブラリのインストールが正しく出来ていないことが多いです。<br>
+一度カタログから本プラグインをアンインストールし、インストールしなおして下さい。
+
+まだ同様のエラーが起こる場合は、手動でライブラリをインストールすることが出来ます。<br>
+C:\ProgramData\aviutl2\Plugin\SAM3\pythonにある、.venvフォルダをまとめて削除し、以下のコマンドを1行ずつ入力してください。
+```bash
+cd C:\ProgramData\aviutl2\Plugin\SAM3\Python
+.\uv.exe sync --locked
+```
+
+### このエラーの原因を確認する方法<br>
+`C:\ProgramData\aviutl2\Plugin\SAM3\Jobs`
+に日付時刻が記されたフォルダがあり、該当するフォルダを開いて下さい。<br>
+`python.stderr.txt`にエラーの原因が記載されています。<br>
+AIに質問 / [Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)で質問する際もこれをもとに質問してください
+
+## init_video_session failed: DefaultCPUAllocator: not enough memoryエラー
+一度に切り抜こうとする動画の秒数が長いとこのエラーが生じます。(各パソコンのメモリに依存)<br>
+動画の長さを短くしてください。<br>
+
+### このエラーの原因を確認する方法<br>
+`C:\ProgramData\aviutl2\Plugin\SAM3\Jobs`
+に日付時刻が記されたフォルダがあり、該当するフォルダを開いて下さい。<br>
+`python.log.txt`にエラーの原因が記載されています。<br>
+AIに質問 / [Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)で質問する際もこれをもとに質問してください
+
+## 切り抜き用の画面においてクリック時にエラー
+v0.0.6において、Geforce RTX5000番台のGPUを利用されていた方に発生していたエラーです。<br>
+カタログにおいてアップデートしてください。
+
+### このエラーの原因を確認する方法<br>
+`C:\ProgramData\aviutl2\Plugin\SAM3\Jobs`
+に日付時刻が記されたフォルダがあり、該当するフォルダを開いて下さい。<br>
+`python.log.txt`にエラーの原因が記載されています。<br>
+AIに質問 / [Issues](https://github.com/clean262/sam3_bb_gb_generator/issues)で質問する際もこれをもとに質問してください
+
+## 切り抜き時にパソコンが重い
+切り抜く動画の長さが長くなると重くなるので適宜長さを調整してください。<br>
+
+## Aviutl2起動時にSAM3 ウィンドウが自動表示される
+今後直します
+
+# ライセンス
 
 **MIT ライセンス** 
 
