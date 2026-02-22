@@ -244,9 +244,11 @@ static bool ParseTwoDoublesFromCsvPrefix(const std::string& s_in, double& a, dou
 }
 
 static bool IsVideoFileEffectName(const std::string& eff) {
-    if (eff.find("動画ファイル") != std::string::npos) return true;
+    const std::string ja_video_file = WideToUtf8(L"\u52d5\u753b\u30d5\u30a1\u30a4\u30eb"); // 動画ファイル
+    const std::string ja_video = WideToUtf8(L"\u52d5\u753b"); // 動画
+    if (eff.find(ja_video_file) != std::string::npos) return true;
     if (eff.find("Video File") != std::string::npos) return true;
-    if (eff.find("動画") != std::string::npos) return true;
+    if (eff.find(ja_video) != std::string::npos) return true;
     return false;
 }
 
@@ -297,7 +299,8 @@ static AliasVideoInfo ParseVideoInfoFromAliasUtf8(std::string alias_utf8) {
         // ファイル=...
         // （日本語/英語の両方を拾う）
         // （中略）
-        const std::vector<std::string> fileKeys = { "ファイル=", "File=", "file=", "path=", "Path=" };
+        const std::string ja_file_key = WideToUtf8(L"\u30d5\u30a1\u30a4\u30eb") + "="; // ファイル=
+        const std::vector<std::string> fileKeys = { ja_file_key, "File=", "file=", "path=", "Path=" };
         for (const auto& k : fileKeys) {
             if (StartsWith(line, k)) {
                 std::string v = line.substr(k.size());
@@ -311,7 +314,8 @@ static AliasVideoInfo ParseVideoInfoFromAliasUtf8(std::string alias_utf8) {
         }
 
         // 再生位置=開始,終了,再生範囲,0
-        const std::vector<std::string> playKeys = { "再生位置=", "Playback=", "playback=" };
+        const std::string ja_playback_key = WideToUtf8(L"\u518d\u751f\u4f4d\u7f6e") + "="; // 再生位置=
+        const std::vector<std::string> playKeys = { ja_playback_key, "Playback=", "playback=" };
         for (const auto& k : playKeys) {
             if (StartsWith(line, k)) {
                 std::string v = line.substr(k.size());
@@ -336,7 +340,8 @@ static AliasVideoInfo ParseVideoInfoFromAliasUtf8(std::string alias_utf8) {
 
 static std::string PatchAliasReplaceVideoFilePath(
     const std::string& original_alias_utf8,
-    const std::string& new_video_path_utf8
+    const std::string& new_video_path_utf8,
+    bool* replaced_out = nullptr
 ) {
     // 元aliasの「動画ファイル」effect の中にある ファイル=... だけ差し替える
     // ついでに「再生位置=...」は削除（出力mp4は既に切り出し済みなのでズレの原因になりがち）
@@ -358,8 +363,10 @@ static std::string PatchAliasReplaceVideoFilePath(
     bool replaced_any = false;
 
     const std::string kEff = "effect.name=";
-    const std::vector<std::string> fileKeys = { "ファイル=", "File=", "file=", "path=", "Path=" };
-    const std::vector<std::string> playKeys = { "再生位置=", "Playback=", "playback=" };
+    const std::string ja_file_key = WideToUtf8(L"\u30d5\u30a1\u30a4\u30eb") + "="; // ファイル=
+    const std::string ja_playback_key = WideToUtf8(L"\u518d\u751f\u4f4d\u7f6e") + "="; // 再生位置=
+    const std::vector<std::string> fileKeys = { ja_file_key, "File=", "file=", "path=", "Path=" };
+    const std::vector<std::string> playKeys = { ja_playback_key, "Playback=", "playback=" };
 
     while (std::getline(iss, line)) {
         RStripCR(line);
@@ -410,6 +417,8 @@ static std::string PatchAliasReplaceVideoFilePath(
 
     // もし置換できなかった（=動画ファイルeffect見つからない等）なら、最悪元aliasを返す
     // （この場合 Apply は失敗する可能性が高いので、呼び出し側で検出してメッセージ出す）
+    if (replaced_out) *replaced_out = replaced_any;
+    if (!replaced_any) return original_alias_utf8;
     return out.str();
 }
 
@@ -499,17 +508,24 @@ static std::string PatchAliasUpsertAlphaMaskEffect(
     const std::string targetEffect = "SAM3mask";
 
     // "マスク動画ファイル" は SAM3mask.anm2 の --file@path:マスク動画ファイル に対応
-    const std::string preferredKey = "マスク動画ファイル=";
-    // これらは SAM3mask.anm2 の --value@...:ラベル に対応（ラベルが alias のキーになる）
-    const std::string preferredStartKey = "元動画開始秒=";
-    const std::string preferredEndKey   = "元動画終了秒=";
+    const std::string preferredKey = WideToUtf8(L"\u30de\u30b9\u30af\u52d5\u753b\u30d5\u30a1\u30a4\u30eb") + "=";
+    const std::string preferredPathVarKey = "path=";
+    // SAM3mask.anm2 の --value@mask_src_start/end のラベルに対応
+    const std::string preferredStartKey = WideToUtf8(L"\u5143\u52d5\u753b\u958b\u59cb\u79d2") + "=";
+    const std::string preferredEndKey   = WideToUtf8(L"\u5143\u52d5\u753b\u7d42\u4e86\u79d2") + "=";
+    const std::string preferredStartVarKey = "mask_src_start=";
+    const std::string preferredEndVarKey   = "mask_src_end=";
     const std::vector<std::string> fileKeys = {
-        "マスク動画ファイル=",
-        "元動画開始秒=",
-        "元動画終了秒=",
-        "動画ファイル=", "ファイル=",
+        preferredKey,
+        preferredPathVarKey,
+        preferredStartKey,
+        preferredEndKey,
+        preferredStartVarKey,
+        preferredEndVarKey,
+        WideToUtf8(L"\u30d5\u30a1\u30a4\u30eb") + "=", // ファイル=
         "path=", "Path=", "file=", "File=",
-        "mask_path=", "MaskPath=", "mask=", "Mask="
+        "mask_path=", "MaskPath=", "mask=", "Mask=",
+        "mask_src_start=", "mask_src_end="
     };
 
     bool in_target_effect = false;
@@ -537,11 +553,13 @@ static std::string PatchAliasUpsertAlphaMaskEffect(
             out << line << "\r\n";
 
             if (is_target) {
-                // ここで「マスク動画ファイル=...」を強制挿入
+                // 堅牢性の為表示ラベルと変数名キーを記述
                 out << preferredKey << mask_video_path_utf8 << "\r\n";
-                // ここで「元動画開始秒/終了秒=...」も強制挿入（分割/再生位置変更に追従するため）
+                out << preferredPathVarKey << mask_video_path_utf8 << "\r\n";
                 out << preferredStartKey << s_start << "\r\n";
                 out << preferredEndKey   << s_end   << "\r\n";
+                out << preferredStartVarKey << s_start << "\r\n";
+                out << preferredEndVarKey   << s_end   << "\r\n";
             }
             continue;
         }
@@ -569,8 +587,11 @@ static std::string PatchAliasUpsertAlphaMaskEffect(
         out << "[Object." << next << "]\r\n";
         out << "effect.name=" << targetEffect << "\r\n";
         out << preferredKey << mask_video_path_utf8 << "\r\n";
+        out << preferredPathVarKey << mask_video_path_utf8 << "\r\n";
         out << preferredStartKey << s_start << "\r\n";
         out << preferredEndKey   << s_end   << "\r\n";
+        out << preferredStartVarKey << s_start << "\r\n";
+        out << preferredEndVarKey   << s_end   << "\r\n";
     }
 
     return out.str();
@@ -1187,6 +1208,7 @@ struct FocusVideoInfo {
     int layer = -1;
     int start_frame = -1;
     int end_frame = -1;
+    double timeline_fps = 30.0;
 
     double playback_start_sec = 0.0;
     double playback_end_sec = 0.0;
@@ -1325,6 +1347,7 @@ static FocusVideoInfo CaptureFocusVideo(EDIT_SECTION* edit) {
         fps = (double)edit->info->rate / (double)edit->info->scale;
     }
     if (fps <= 0.0) fps = 30.0;
+    out.timeline_fps = fps;
 
     // フォールバック：タイムラインのフレーム範囲を秒にしたもの
     out.playback_start_sec = (double)lf.start / fps;
@@ -1421,7 +1444,8 @@ static std::string BuildRequestJsonV1(
         << "  \"timeline\": {\n"
         << "    \"layer\": " << f.layer << ",\n"
         << "    \"start_frame\": " << f.start_frame << ",\n"
-        << "    \"end_frame\": " << f.end_frame << "\n"
+        << "    \"end_frame\": " << f.end_frame << ",\n"
+        << "    \"fps\": " << f.timeline_fps << "\n"
         << "  },\n"
         << "\n"
         << "  \"snapshot\": {\n"
@@ -1489,16 +1513,49 @@ static void UpdateUiText(HWND hwnd, const FocusVideoInfo& f, const fs::path& job
 
 // ---- Python 起動 ----
 static std::optional<std::wstring> FindPythonExe() {
+    // 明示的に環境変数に上書き
+    wchar_t envbuf[32768]{};
+    DWORD n = GetEnvironmentVariableW(L"SAM3_PYTHON_EXE", envbuf, (DWORD)std::size(envbuf));
+    if (n > 0 && n < (DWORD)std::size(envbuf)) {
+        fs::path p = fs::path(envbuf);
+        std::error_code ec;
+        if (fs::exists(p, ec) && !fs::is_directory(p, ec)) {
+            return p.wstring();
+        }
+    }
+
+    // Pythonの場所
     fs::path root = PluginRootDir();
-    fs::path p1 = root / L"Python" / L".venv" / L"Scripts" / L"python.exe";
-    fs::path p2 = root / L"Python" / L"python.exe";
-    if (fs::exists(p1)) return p1.wstring();
-    if (fs::exists(p2)) return p2.wstring();
+    const fs::path cands[] = {
+        root / L"Python" / L".venv" / L"Scripts" / L"python.exe",
+        root / L"python" / L".venv" / L"Scripts" / L"python.exe",
+        root / L"Python" / L"python.exe",
+        root / L"python" / L"python.exe",
+    };
+    for (const auto& p : cands) {
+        std::error_code ec;
+        if (fs::exists(p, ec) && !fs::is_directory(p, ec)) {
+            return p.wstring();
+        }
+    }
+
+    // PATHを検索
+    wchar_t pathbuf[MAX_PATH * 4]{};
+    DWORD got = SearchPathW(nullptr, L"python.exe", nullptr, (DWORD)std::size(pathbuf), pathbuf, nullptr);
+    if (got > 0 && got < (DWORD)std::size(pathbuf)) {
+        return std::wstring(pathbuf);
+    }
+
     return std::nullopt;
 }
 
 static fs::path PythonScriptPath() {
-    return PluginRootDir() / L"Python" / L"sam3_gradio_job.py";
+    fs::path root = PluginRootDir();
+    fs::path p1 = root / L"Python" / L"sam3_gradio_job.py";
+    fs::path p2 = root / L"python" / L"sam3_gradio_job.py";
+    if (fs::exists(p1)) return p1;
+    if (fs::exists(p2)) return p2;
+    return p1;
 }
 
 static bool LaunchPythonJob(const fs::path& jobdir) {
@@ -1760,7 +1817,21 @@ static void PollJobFiles() {
 							ui += L"\n[warn] insert_mode=transparent but mask_video_path is empty.";
 						}
 					} else {
-						patched = PatchAliasReplaceVideoFilePath(*alias, *outp);
+                        bool replaced_video_path = false;
+						patched = PatchAliasReplaceVideoFilePath(*alias, *outp, &replaced_video_path);
+                        if (!replaced_video_path) {
+                            ui += L"\n(insert) FAILED: could not replace video file path in alias.";
+                            MessageBoxW(
+                                g_hwnd,
+                                L"Could not replace video file path in alias.\nCheck focus_alias_utf8.txt.",
+                                L"SAM3",
+                                MB_OK
+                            );
+                            UpdateUiText(g_hwnd, g_last_focus, g_last_job_dir, ui);
+                            StopPollingTimer(g_hwnd);
+                            CleanupChildProcessAfterJobDone(g_last_job_dir);
+                            return;
+                        }
 					}
 
                     ApplyCtx actx;
@@ -2076,7 +2147,5 @@ void RegisterPlugin(HOST_APP_TABLE* host)
     g_hwnd = CreatePanelWindow();
     if (g_hwnd) {
         host->register_window_client(L"SAM3", g_hwnd);
-        ShowWindow(g_hwnd, SW_SHOW);
-        UpdateWindow(g_hwnd);
     }
 }

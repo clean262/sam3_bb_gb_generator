@@ -1,4 +1,5 @@
 import argparse
+import errno
 from csv import writer
 import gc
 import traceback
@@ -86,11 +87,55 @@ def _apply_request_defaults(req: dict) -> None:
 def jst_now() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
-def write_atomic(path: str, text: str) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+def _is_retryable_replace_error(exc: BaseException) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        winerror = int(getattr(exc, "winerror", 0) or 0)
+        if winerror in (5, 32):
+            return True
+        err_no = int(getattr(exc, "errno", 0) or 0)
+        if err_no in (errno.EACCES, errno.EPERM, errno.EBUSY):
+            return True
+    return False
+
+def write_atomic(path: str, text: str, retries: int = 30, retry_sleep: float = 0.02) -> None:
+    # ステータス確認が頻繁に行われる場合は一時ファイルで
+    tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
-    os.replace(tmp, path)
+        try:
+            f.flush()
+            os.fsync(f.fileno())
+        except Exception:
+            pass
+
+    last_exc: Optional[BaseException] = None
+    for i in range(max(1, int(retries))):
+        try:
+            os.replace(tmp, path)
+            return
+        except Exception as e:
+            last_exc = e
+            if (not _is_retryable_replace_error(e)) or (i + 1 >= max(1, int(retries))):
+                break
+            time.sleep(float(retry_sleep))
+
+    # フォールバック、ジョブがロックで失敗しないようにする
+    try:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        return
+    except Exception:
+        if last_exc is not None:
+            raise last_exc
+        raise
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
 
 def write_status(job_dir: str, **kwargs) -> None:
     payload = {
@@ -103,7 +148,10 @@ def write_status(job_dir: str, **kwargs) -> None:
         "gradio_url": kwargs.get("gradio_url", ""),
         "updated_at_jst": jst_now(),
     }
-    write_atomic(os.path.join(job_dir, "status.json"), json.dumps(payload, ensure_ascii=False, indent=2))
+    try:
+        write_atomic(os.path.join(job_dir, "status.json"), json.dumps(payload, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"[WARN] write_status failed: {e}")
 
 def write_result(
     job_dir: str,
@@ -174,10 +222,11 @@ def load_video_segment_frames(
     start_sec: float,
     end_sec: float,
     max_seconds: int = 120,
+    expected_num_frames: Optional[int] = None,
 ) -> Tuple[List[Image.Image], SegmentInfo]:
     """
     指定区間 [start_sec, end_sec] を読み込み。
-    end_sec <= start_sec のときは start から max_seconds 分。
+    end_sec <= start_sec は不正として扱う。
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -189,9 +238,9 @@ def load_video_segment_frames(
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
 
-    # endのフォールバック
+    # 無効な範囲の場合は即座に処理を終了させる
     if end_sec <= start_sec:
-        end_sec = start_sec + float(max_seconds)
+        raise RuntimeError(f"Invalid segment range: start_sec={start_sec}, end_sec={end_sec}")
 
     # max_seconds 安全弁
     if max_seconds and (end_sec - start_sec) > float(max_seconds):
@@ -204,7 +253,11 @@ def load_video_segment_frames(
     t_limit = end_sec
     # cv2 は timestamp 取得が不安定なことがあるので、fps換算も併用
     start_frame_guess = int(round(start_sec * fps))
-    end_frame_guess = int(round(end_sec * fps))
+    exp_frames = int(expected_num_frames) if expected_num_frames is not None else 0
+    if exp_frames > 0:
+        end_frame_guess = start_frame_guess + exp_frames
+    else:
+        end_frame_guess = int(round(end_sec * fps))
 
     # 現在フレーム位置
     cur_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES) or 0)
@@ -212,8 +265,10 @@ def load_video_segment_frames(
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_guess)
 
     while True:
+        if exp_frames > 0 and len(frames) >= exp_frames:
+            break
         cur_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES) or 0)
-        if cur_frame >= end_frame_guess:
+        if exp_frames <= 0 and cur_frame >= end_frame_guess:
             break
 
         ret, frame_bgr = cap.read()
@@ -221,9 +276,10 @@ def load_video_segment_frames(
             break
 
         # timestamp check (if available)
-        t_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-        if t_msec and (t_msec / 1000.0) > t_limit:
-            break
+        if exp_frames <= 0:
+            t_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+            if t_msec and (t_msec / 1000.0) > t_limit:
+                break
 
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         frames.append(Image.fromarray(frame_rgb))
@@ -235,6 +291,15 @@ def load_video_segment_frames(
 
     if len(frames) == 0:
         raise RuntimeError("No frames loaded in the requested segment.")
+    if exp_frames > 0 and len(frames) < exp_frames:
+        short = exp_frames - len(frames)
+        if short <= 2:
+            print(f"[WARN] Segment was short by {short} frame(s). Padding with last frame.")
+            last = frames[-1]
+            for _ in range(short):
+                frames.append(last.copy())
+        else:
+            raise RuntimeError(f"Segment frame shortage: expected={exp_frames}, got={len(frames)}")
 
     # w/h が取れなかった場合はフレームから
     if w <= 0 or h <= 0:
@@ -277,9 +342,110 @@ def _resolve_ffmpeg_exe() -> str:
         "ffmpeg executable was not found. Install imageio-ffmpeg or set IMAGEIO_FFMPEG_EXE."
     )
 
+def _decode_subprocess_text(data: Any) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    if not isinstance(data, (bytes, bytearray)):
+        return str(data)
+    b = bytes(data)
+    encodings = ["utf-8", "cp932", sys.getdefaultencoding() or "utf-8"]
+    seen = set()
+    for enc in encodings:
+        if enc in seen:
+            continue
+        seen.add(enc)
+        try:
+            return b.decode(enc)
+        except Exception:
+            pass
+    return b.decode("utf-8", errors="replace")
+
 def _run_ffmpeg(cmd: List[str]) -> Tuple[int, str]:
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    return r.returncode, (r.stderr or "")
+    # バイト列として読み込み、UnicodeDecodeError回避のために自前でデコード
+    r = subprocess.run(cmd, capture_output=True, text=False)
+    stderr = _decode_subprocess_text(r.stderr)
+    if stderr:
+        return r.returncode, stderr
+    return r.returncode, _decode_subprocess_text(r.stdout)
+
+def preprocess_video_segment_for_tracking(
+    source_video: str,
+    out_path: str,
+    start_sec: float,
+    duration_sec: float,
+    fps: Optional[float] = None,
+    expected_num_frames: Optional[int] = None,
+) -> str:
+    if not source_video or not os.path.isfile(source_video):
+        raise RuntimeError(f"source video not found: {source_video}")
+    if duration_sec <= 0.0:
+        raise RuntimeError(f"invalid segment duration: {duration_sec}")
+
+    ffmpeg = _resolve_ffmpeg_exe()
+    out_parent = os.path.dirname(out_path)
+    if out_parent:
+        os.makedirs(out_parent, exist_ok=True)
+    if os.path.exists(out_path):
+        try:
+            os.remove(out_path)
+        except Exception:
+            pass
+
+    vf = None
+    fps_v = float(fps) if (fps is not None and float(fps) > 0.0) else 0.0
+    exp_frames = int(expected_num_frames) if expected_num_frames is not None else 0
+    if fps_v > 0.0:
+        vf = f"fps={fps_v:.8f}"
+
+    # フレーム数を明示するときはヘッドルームを追加して-frames:vでクランプするようにする
+    duration_for_cut = float(duration_sec)
+    if fps_v > 0.0 and exp_frames > 0:
+        duration_for_cut = max(duration_for_cut, (exp_frames / fps_v) + (0.5 / fps_v))
+
+    def _base_cmd(codec_args: List[str]) -> List[str]:
+        cmd = [
+            ffmpeg, "-y",
+            "-ss", f"{start_sec:.6f}",
+            "-i", source_video,
+            "-t", f"{duration_for_cut:.6f}",
+            "-map", "0:v:0",
+            "-an", "-sn", "-dn",
+        ]
+        if vf:
+            cmd += ["-vf", vf]
+        cmd += codec_args
+        if exp_frames > 0:
+            cmd += ["-frames:v", str(exp_frames), "-fps_mode", "cfr"]
+        cmd += [out_path]
+        return cmd
+
+    # NVENCを優先、libx264を使用
+    cmd_nvenc = _base_cmd([
+        "-c:v", "h264_nvenc",
+        "-preset", "p4",
+        "-cq", "23",
+        "-b:v", "0",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+    ])
+    code, err = _run_ffmpeg(cmd_nvenc)
+    if code == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+        return out_path
+
+    cmd_x264 = _base_cmd([
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+    ])
+    code2, err2 = _run_ffmpeg(cmd_x264)
+    if code2 == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+        return out_path
+
+    raise RuntimeError(f"Failed to preprocess segment video.\n[nvenc]\n{err}\n\n[libx264]\n{err2}")
 
 def make_h264_aac_preview(
     video_noaudio: str,
@@ -880,16 +1046,27 @@ def propagate_masks(state: AppState) -> Iterator[Tuple[AppState, str, Any, Image
     model, processor = ensure_models_loaded()
 
     total = max(1, state.num_frames)
-    processed = 0
+    seen_frames: set[int] = set()
 
     write_status(state.job_dir, state="running", phase="propagate", progress=0.35, message="Propagating...")
 
     # start UI update
-    yield state, f"Propagating masks: {processed}/{total}", gr.update(), update_frame_display(state, state.current_frame_idx)
+    yield state, f"Propagating masks: 0/{total}", gr.update(), update_frame_display(state, state.current_frame_idx)
 
     last_frame_idx = 0
-    with torch.no_grad():
-        for out in model.propagate_in_video_iterator(inference_session=state.inference_session):
+
+    def _iter_outputs(reverse: bool):
+        # Keep API compatibility for older/newer transformers.
+        kwargs = {"inference_session": state.inference_session, "reverse": bool(reverse)}
+        try:
+            return model.propagate_in_video_iterator(**kwargs)
+        except TypeError:
+            kwargs.pop("reverse", None)
+            return model.propagate_in_video_iterator(**kwargs)
+
+    def _consume(reverse: bool):
+        nonlocal last_frame_idx
+        for out in _iter_outputs(reverse=reverse):
             video_res_masks = processor.post_process_masks(
                 [out.pred_masks],
                 original_sizes=[[state.inference_session.video_height, state.inference_session.video_width]],
@@ -910,19 +1087,28 @@ def propagate_masks(state: AppState) -> Iterator[Tuple[AppState, str, Any, Image
             state.composited_frames.pop(frame_idx, None)
 
             last_frame_idx = frame_idx
-            processed += 1
+            seen_frames.add(frame_idx)
 
             # status update
-            if processed % 20 == 0 or processed == total:
-                prog = 0.35 + 0.25 * (processed / total)
+            covered = len(seen_frames)
+            if covered % 20 == 0 or covered == total:
+                prog = 0.35 + 0.25 * (covered / total)
                 write_status(state.job_dir, state="running", phase="propagate", progress=prog,
-                             message=f"Propagating... {processed}/{total}")
+                             message=f"Propagating... {covered}/{total}")
 
                 state.current_frame_idx = last_frame_idx
-                yield state, f"Propagating masks: {processed}/{total}", gr.update(value=last_frame_idx), update_frame_display(state, last_frame_idx)
+                yield state, f"Propagating masks: {covered}/{total}", gr.update(value=last_frame_idx), update_frame_display(state, last_frame_idx)
+
+    with torch.no_grad():
+        # 指定されたフレームから最後まで
+        for item in _consume(reverse=False):
+            yield item
+        # 指定よりも前のフレーム処理
+        for item in _consume(reverse=True):
+            yield item
 
     write_status(state.job_dir, state="running", phase="propagate", progress=0.60, message="Propagation done.")
-    yield state, f"Propagated masks across {processed} frames.", gr.update(value=last_frame_idx), update_frame_display(state, last_frame_idx)
+    yield state, f"Propagated masks across {len(seen_frames)} frames.", gr.update(value=last_frame_idx), update_frame_display(state, last_frame_idx)
 
 # -------------------------
 # Render GB/BB video and finish
@@ -1295,6 +1481,45 @@ def main():
     start = float(req.get("playback_start_sec", 0.0) or 0.0)
     end = float(req.get("playback_end_sec", 0.0) or 0.0)
     out_dir = req.get("output_dir", str(job_dir)) or str(job_dir)
+    timeline = req.get("timeline", {}) or {}
+    try:
+        timeline_start_frame = int(timeline.get("start_frame", -1))
+    except Exception:
+        timeline_start_frame = -1
+    try:
+        timeline_end_frame = int(timeline.get("end_frame", -1))
+    except Exception:
+        timeline_end_frame = -1
+    try:
+        timeline_fps = float(timeline.get("fps", 0.0) or 0.0)
+    except Exception:
+        timeline_fps = 0.0
+    timeline_num_frames = 0
+    if timeline_start_frame >= 0 and timeline_end_frame >= timeline_start_frame:
+        timeline_num_frames = timeline_end_frame - timeline_start_frame + 1
+    timeline_duration_sec = 0.0
+    if timeline_num_frames > 0 and timeline_fps > 0.0:
+        timeline_duration_sec = timeline_num_frames / timeline_fps
+        print(
+            "TIMELINE_SEGMENT =",
+            f"frames={timeline_num_frames}, fps={timeline_fps:.6f}, duration={timeline_duration_sec:.6f}s",
+        )
+
+    segment_start_sec = float(start)
+    if timeline_duration_sec > 0.0:
+        segment_duration_sec = float(timeline_duration_sec)
+    else:
+        segment_duration_sec = float(end - start)
+    if segment_duration_sec <= 0.0:
+        write_result(str(job_dir), False, error_message=f"Invalid segment duration: {segment_duration_sec}")
+        write_status(str(job_dir), state="failed", phase="load_video", progress=1.0,
+                     message=f"Invalid segment duration: {segment_duration_sec}")
+        return
+    segment_end_sec = segment_start_sec + segment_duration_sec
+    print(
+        "SEGMENT_REQUEST =",
+        f"start={segment_start_sec:.6f}, end={segment_end_sec:.6f}, duration={segment_duration_sec:.6f}s",
+    )
 
     options = req.get("options", {}) or {}
     # max_seconds=0 を “0のまま(無制限)” として扱う
@@ -1317,16 +1542,47 @@ def main():
         write_status(str(job_dir), state="failed", phase="boot", progress=1.0, message=f"Model load failed: {e}")
         return
 
-    write_status(str(job_dir), state="running", phase="load_video", progress=0.08, message="Loading video segment...")
+    write_status(
+        str(job_dir),
+        state="running",
+        phase="preprocess",
+        progress=0.06,
+        message="Preprocessing segment video (ffmpeg)...",
+    )
 
     if not src:
         write_result(str(job_dir), False, error_message="source_video_path is empty")
         write_status(str(job_dir), state="failed", phase="load_video", progress=1.0, message="source_video_path is empty")
         return
 
+    preprocessed_input_video = str(job_dir / "_segment_input_preprocessed.mp4")
+    try:
+        preprocess_video_segment_for_tracking(
+            source_video=src,
+            out_path=preprocessed_input_video,
+            start_sec=segment_start_sec,
+            duration_sec=segment_duration_sec,
+            fps=(timeline_fps if timeline_fps > 0.0 else None),
+            expected_num_frames=(timeline_num_frames if timeline_num_frames > 0 else None),
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        write_result(str(job_dir), False, error_message=f"Segment preprocess failed: {e}")
+        write_status(str(job_dir), state="failed", phase="preprocess", progress=1.0, message=f"Segment preprocess failed: {e}")
+        return
+
+    write_status(str(job_dir), state="running", phase="load_video", progress=0.08, message="Loading preprocessed segment frames...")
+
     # load segment frames
     try:
-        frames, seginfo = load_video_segment_frames(src, start, end, max_seconds=max_seconds)
+        frames, seginfo = load_video_segment_frames(
+            preprocessed_input_video,
+            0.0,
+            segment_duration_sec,
+            max_seconds=0,
+            expected_num_frames=(timeline_num_frames if timeline_num_frames > 0 else None),
+        )
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -1342,8 +1598,8 @@ def main():
     state0.job_dir = str(job_dir)
     state0.output_dir = str(out_dir)
     state0.source_video_path = str(src)
-    state0.segment_start_sec = float(seginfo.start_sec)
-    state0.segment_end_sec = float(seginfo.end_sec)
+    state0.segment_start_sec = float(segment_start_sec)
+    state0.segment_end_sec = float(segment_end_sec)
     state0.video_frames = frames
     state0.video_fps = float(seginfo.fps)
 
