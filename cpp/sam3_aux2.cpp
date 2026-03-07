@@ -1,4 +1,4 @@
-// v0.0.7
+// v0.0.8
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -2076,7 +2076,5 @@ void RegisterPlugin(HOST_APP_TABLE* host)
     g_hwnd = CreatePanelWindow();
     if (g_hwnd) {
         host->register_window_client(L"SAM3", g_hwnd);
-        ShowWindow(g_hwnd, SW_SHOW);
-        UpdateWindow(g_hwnd);
     }
 }
