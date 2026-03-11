@@ -51,8 +51,23 @@ local function safe_call(f)
   return nil
 end
 
+local function get_time_seconds()
+  -- obj.getvalue("time")は秒なのでこっち
+  local t = tonumber_safe(safe_call(function() return obj.getvalue("time") end))
+  if t == nil then t = tonumber_safe(obj.time) end
+  if t == nil then t = 0.0 end
+  return t
+end
+
+local function get_totaltime_seconds()
+  local tt = tonumber_safe(safe_call(function() return obj.getvalue("totaltime") end))
+  if tt == nil then tt = tonumber_safe(obj.totaltime) end
+  if tt == nil or tt <= 0 then tt = 0.0 end
+  return tt
+end
+
 local function get_effect_item_value(effect_name, item_name)
-  local t = obj.time
+  local t = get_time_seconds()
   -- 確定: obj.getvalue(effect,item,time,section)
   return safe_call(function() return obj.getvalue(effect_name, item_name, t, 0) end)
 end
@@ -61,6 +76,8 @@ local function get_video_playback_range()
   -- 日本語UI/英語UIの両対応（取れた方を使う）
   local s = get_effect_item_value("動画ファイル", "再生位置")
   if s == nil then s = get_effect_item_value("Video File", "Playback") end
+  if s == nil then s = get_effect_item_value("映像再生", "再生位置") end
+  if s == nil then s = get_effect_item_value("Movie Playback", "Playback") end
 
   -- 返り値が number / string / その他でも極力拾う
   if type(s) == "number" then
@@ -72,25 +89,42 @@ end
 local function get_video_speed_percent()
   local s = get_effect_item_value("動画ファイル", "再生速度")
   if s == nil then s = get_effect_item_value("Video File", "Playback Speed") end
+  if s == nil then s = get_effect_item_value("映像再生", "再生速度") end
+  if s == nil then s = get_effect_item_value("Movie Playback", "Playback Speed") end
   local v = tonumber_safe(s) or (type(s) == "number" and s) or 100.0
   if v <= 0 then v = 100.0 end
   return v
 end
 
--- 元動画の開始秒（マスク生成時の基準）。未設定なら0扱い。
-local src0 = tonumber_safe(mask_src_start) or 0.0
-local src1 = tonumber_safe(mask_src_end) or 0.0
-
--- 現在の「動画ファイル」効果が示す再生範囲/速度を取得
+-- 現在の動画ファイルの再生範囲/速度を取得
 local pb0, pb1 = get_video_playback_range()
 local sp = get_video_speed_percent()
+
+-- 元動画の開始/終了秒、これをマスク生成時の基準とする
+-- 変数キー読み込み失敗時は、再生位置からフォールバックして同期ズレを防ぐ
+local src0_raw = tonumber_safe(mask_src_start)
+local src1_raw = tonumber_safe(mask_src_end)
+local src0 = src0_raw
+local src1 = src1_raw
+if src0 == nil then
+  src0 = (pb0 ~= nil) and pb0 or 0.0
+end
+if src1 == nil then
+  src1 = (pb1 ~= nil) and pb1 or src0
+end
 
 -- フォールバック（再生位置が取れない場合は従来挙動）
 local src_t
 if pb0 ~= nil then
-  src_t = pb0 + (obj.time * (sp / 100.0))
+  src_t = pb0 + (get_time_seconds() * (sp / 100.0))
 else
-  src_t = (obj.time % obj.totaltime)
+  local tt = get_totaltime_seconds()
+  local now_t = get_time_seconds()
+  if tt > 0 then
+    src_t = (now_t % tt)
+  else
+    src_t = now_t
+  end
 end
 
 -- マスク側シーク時刻（秒）
