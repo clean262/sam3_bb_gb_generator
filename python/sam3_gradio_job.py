@@ -575,6 +575,7 @@ class AppState:
         self.composited_frames: Dict[int, Image.Image] = {}
 
         self.current_frame_idx: int = 0
+        self.last_annotated_frame_idx: Optional[int] = None
         self.current_obj_id: int = 1
         self.current_label: str = "positive"
         self.current_clear_old: bool = False
@@ -711,6 +712,7 @@ def reset_prompts_keep_video(state: AppState) -> None:
     state.boxes_by_frame_obj.clear()
     state.composited_frames.clear()
     state.color_by_obj.clear()
+    state.last_annotated_frame_idx = None
 
     # box の途中状態もクリア
     state.pending_box_start = None
@@ -809,6 +811,7 @@ def on_image_click(
         obj_boxes = frame_boxes.setdefault(ann_obj_id, [])
         obj_boxes.clear()
         obj_boxes.append((x_min, y_min, x_max, y_max))
+        state.last_annotated_frame_idx = ann_frame_idx
         state.composited_frames.pop(ann_frame_idx, None)
 
     else:
@@ -835,6 +838,7 @@ def on_image_click(
             input_labels=labels,
             clear_old_inputs=bool(clear_old),
         )
+        state.last_annotated_frame_idx = ann_frame_idx
         state.composited_frames.pop(ann_frame_idx, None)
 
     # run inference for that frame
@@ -880,49 +884,119 @@ def propagate_masks(state: AppState) -> Iterator[Tuple[AppState, str, Any, Image
     model, processor = ensure_models_loaded()
 
     total = max(1, state.num_frames)
-    processed = 0
+    start_frame_idx = state.last_annotated_frame_idx
+    if start_frame_idx is None:
+        start_frame_idx = state.current_frame_idx
+    start_frame_idx = int(np.clip(int(start_frame_idx), 0, total - 1))
+    state.current_frame_idx = start_frame_idx
+    seen_frames: set[int] = set()
 
-    write_status(state.job_dir, state="running", phase="propagate", progress=0.35, message="Propagating...")
+    def _iter_propagation_outputs(reverse: bool):
+        propagate_fn = model.propagate_in_video_iterator
+        kwargs = {"inference_session": state.inference_session}
+        try:
+            sig = inspect.signature(propagate_fn)
+        except (TypeError, ValueError):
+            sig = None
+
+        supports_var_kwargs = False
+        if sig is not None:
+            supports_var_kwargs = any(
+                param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values()
+            )
+            if "start_frame_idx" in sig.parameters or supports_var_kwargs:
+                kwargs["start_frame_idx"] = start_frame_idx
+            if "reverse" in sig.parameters or supports_var_kwargs:
+                kwargs["reverse"] = bool(reverse)
+        else:
+            kwargs["start_frame_idx"] = start_frame_idx
+            kwargs["reverse"] = bool(reverse)
+
+        try:
+            return propagate_fn(**kwargs)
+        except TypeError:
+            kwargs.pop("reverse", None)
+            try:
+                return propagate_fn(**kwargs)
+            except TypeError:
+                kwargs.pop("start_frame_idx", None)
+                return propagate_fn(**kwargs)
+
+    write_status(
+        state.job_dir,
+        state="running",
+        phase="propagate",
+        progress=0.35,
+        message=f"Propagating from frame {start_frame_idx} in both directions...",
+    )
 
     # start UI update
-    yield state, f"Propagating masks: {processed}/{total}", gr.update(), update_frame_display(state, state.current_frame_idx)
+    yield (
+        state,
+        f"Propagating masks from frame {start_frame_idx}: 0/{total}",
+        gr.update(value=start_frame_idx),
+        update_frame_display(state, start_frame_idx),
+    )
 
-    last_frame_idx = 0
+    last_frame_idx = start_frame_idx
     with torch.no_grad():
-        for out in model.propagate_in_video_iterator(inference_session=state.inference_session):
-            video_res_masks = processor.post_process_masks(
-                [out.pred_masks],
-                original_sizes=[[state.inference_session.video_height, state.inference_session.video_width]],
-            )[0]
-            frame_idx = int(out.frame_idx)
-            masks3 = _normalize_masks(video_res_masks)
-            out_obj_ids = _to_int_list(getattr(out, "object_ids", None))
+        for reverse in (False, True):
+            for out in _iter_propagation_outputs(reverse=reverse):
+                video_res_masks = processor.post_process_masks(
+                    [out.pred_masks],
+                    original_sizes=[[state.inference_session.video_height, state.inference_session.video_width]],
+                )[0]
+                frame_idx = int(out.frame_idx)
+                masks3 = _normalize_masks(video_res_masks)
+                out_obj_ids = _to_int_list(getattr(out, "object_ids", None))
 
-            if out_obj_ids is None or len(out_obj_ids) != masks3.shape[0]:
-                sess_obj_ids = [int(x) for x in getattr(state.inference_session, "obj_ids", [])]
-                out_obj_ids = sess_obj_ids[: masks3.shape[0]]
+                if out_obj_ids is None or len(out_obj_ids) != masks3.shape[0]:
+                    sess_obj_ids = [int(x) for x in getattr(state.inference_session, "obj_ids", [])]
+                    out_obj_ids = sess_obj_ids[: masks3.shape[0]]
 
-            masks_for_frame = state.masks_by_frame.setdefault(frame_idx, {})
-            for i, oid in enumerate(out_obj_ids):
-                _ensure_color_for_obj(state.color_by_obj, int(oid))
-                mask_2d = (masks3[i] > 0.0).to(torch.uint8).cpu().numpy()
-                masks_for_frame[int(oid)] = mask_2d
-            state.composited_frames.pop(frame_idx, None)
+                masks_for_frame = state.masks_by_frame.setdefault(frame_idx, {})
+                for i, oid in enumerate(out_obj_ids):
+                    _ensure_color_for_obj(state.color_by_obj, int(oid))
+                    mask_2d = (masks3[i] > 0.0).to(torch.uint8).cpu().numpy()
+                    masks_for_frame[int(oid)] = mask_2d
+                state.composited_frames.pop(frame_idx, None)
 
-            last_frame_idx = frame_idx
-            processed += 1
+                last_frame_idx = frame_idx
+                seen_frames.add(frame_idx)
+                covered = len(seen_frames)
 
-            # status update
-            if processed % 20 == 0 or processed == total:
-                prog = 0.35 + 0.25 * (processed / total)
-                write_status(state.job_dir, state="running", phase="propagate", progress=prog,
-                             message=f"Propagating... {processed}/{total}")
+                # status update
+                if covered % 20 == 0 or covered == total:
+                    prog = 0.35 + 0.25 * (covered / total)
+                    write_status(
+                        state.job_dir,
+                        state="running",
+                        phase="propagate",
+                        progress=prog,
+                        message=f"Propagating from frame {start_frame_idx}... {covered}/{total}",
+                    )
 
-                state.current_frame_idx = last_frame_idx
-                yield state, f"Propagating masks: {processed}/{total}", gr.update(value=last_frame_idx), update_frame_display(state, last_frame_idx)
+                    state.current_frame_idx = last_frame_idx
+                    yield (
+                        state,
+                        f"Propagating masks from frame {start_frame_idx}: {covered}/{total}",
+                        gr.update(value=last_frame_idx),
+                        update_frame_display(state, last_frame_idx),
+                    )
 
-    write_status(state.job_dir, state="running", phase="propagate", progress=0.60, message="Propagation done.")
-    yield state, f"Propagated masks across {processed} frames.", gr.update(value=last_frame_idx), update_frame_display(state, last_frame_idx)
+    write_status(
+        state.job_dir,
+        state="running",
+        phase="propagate",
+        progress=0.60,
+        message=f"Propagation done from frame {start_frame_idx}.",
+    )
+    yield (
+        state,
+        f"Propagated masks across {len(seen_frames)} frames from frame {start_frame_idx}.",
+        gr.update(value=last_frame_idx),
+        update_frame_display(state, last_frame_idx),
+    )
 
 # -------------------------
 # Render GB/BB video and finish
