@@ -459,6 +459,146 @@ def _clear_points_for_object_all_frames(state: "AppState", obj_id: int) -> None:
     for f in changed_frames:
         state.composited_frames.pop(f, None)
 
+def _iter_prompt_entries(state: "AppState") -> List[Tuple[int, int, str, Any]]:
+    entries: List[Tuple[int, int, str, Any]] = []
+    frame_indices = set(state.clicks_by_frame_obj.keys()) | set(state.boxes_by_frame_obj.keys())
+    for frame_idx in sorted(int(f) for f in frame_indices):
+        obj_ids = set((state.clicks_by_frame_obj.get(frame_idx) or {}).keys()) | set(
+            (state.boxes_by_frame_obj.get(frame_idx) or {}).keys()
+        )
+        for obj_id in sorted(int(o) for o in obj_ids):
+            boxes = ((state.boxes_by_frame_obj.get(frame_idx) or {}).get(obj_id) or [])
+            points = ((state.clicks_by_frame_obj.get(frame_idx) or {}).get(obj_id) or [])
+            if boxes:
+                # Prefer boxes when both exist for the same frame/object.
+                entries.append((frame_idx, obj_id, "box", boxes[-1]))
+            elif points:
+                entries.append((frame_idx, obj_id, "points", list(points)))
+    return entries
+
+def _store_frame_masks_from_outputs(
+    state: "AppState",
+    processor,
+    outputs,
+    frame_idx: int,
+    fallback_obj_ids: Optional[List[int]] = None,
+) -> None:
+    processed = processor.post_process_masks(
+        [outputs.pred_masks],
+        [[state.inference_session.video_height, state.inference_session.video_width]],
+        binarize=False,
+    )[0]
+
+    out_obj_ids = _to_int_list(getattr(outputs, "object_ids", None))
+    if out_obj_ids is None:
+        out_obj_ids = fallback_obj_ids or []
+
+    masks = _normalize_masks(processed, out_obj_ids)  # (K,H,W)
+    k_count = masks.shape[0]
+    if len(out_obj_ids) != k_count:
+        out_obj_ids = out_obj_ids[:k_count]
+
+    masks_for_frame = state.masks_by_frame.setdefault(int(frame_idx), {})
+    for k, oid in enumerate(out_obj_ids):
+        _ensure_color_for_obj(state.color_by_obj, int(oid))
+        mask_2d = (masks[k] > 0.0).to(torch.uint8).cpu().numpy()
+        masks_for_frame[int(oid)] = mask_2d
+    state.composited_frames.pop(int(frame_idx), None)
+
+def _rebuild_tracking_state_from_prompts(state: "AppState", model, processor) -> set[int]:
+    if state is None or state.inference_session is None:
+        return set()
+    if not hasattr(state.inference_session, "reset_tracking_data"):
+        raise gr.Error("Inference session does not support reset_tracking_data().")
+
+    entries = _iter_prompt_entries(state)
+    state.inference_session.reset_tracking_data()
+    initialized_frames: set[int] = set()
+    frame_to_entries: Dict[int, List[Tuple[int, int, str, Any]]] = {}
+    for frame_idx, obj_id, prompt_kind, payload in entries:
+        frame_to_entries.setdefault(int(frame_idx), []).append((int(frame_idx), int(obj_id), prompt_kind, payload))
+
+    with torch.no_grad():
+        for frame_idx in sorted(frame_to_entries.keys()):
+            frame_entries = frame_to_entries[frame_idx]
+            frame_obj_ids = sorted({int(obj_id) for _, obj_id, _, _ in frame_entries})
+            for _entry_frame_idx, obj_id, prompt_kind, payload in frame_entries:
+                _ensure_color_for_obj(state.color_by_obj, obj_id)
+                if prompt_kind == "box":
+                    x1, y1, x2, y2 = payload
+                    box3 = [[[int(x1), int(y1), int(x2), int(y2)]]]
+                    try:
+                        _call_add_inputs(
+                            processor,
+                            inference_session=state.inference_session,
+                            frame_idx=int(frame_idx),
+                            obj_ids=[int(obj_id)],
+                            input_boxes=box3,
+                            clear_old_points=True,
+                            clear_old_boxes=True,
+                            clear_old_inputs=True,
+                        )
+                    except ValueError as e:
+                        msg = str(e)
+                        if "nested list with 4 levels" in msg or "Got 3 levels" in msg:
+                            _call_add_inputs(
+                                processor,
+                                inference_session=state.inference_session,
+                                frame_idx=int(frame_idx),
+                                obj_ids=[int(obj_id)],
+                                input_boxes=[box3],
+                                clear_old_points=True,
+                                clear_old_boxes=True,
+                                clear_old_inputs=True,
+                            )
+                        else:
+                            raise
+                else:
+                    points = [[[[int(c[0]), int(c[1])] for c in payload]]]
+                    labels = [[[int(c[2]) for c in payload]]]
+                    _call_add_inputs(
+                        processor,
+                        inference_session=state.inference_session,
+                        frame_idx=int(frame_idx),
+                        obj_ids=[int(obj_id)],
+                        input_points=points,
+                        input_labels=labels,
+                        clear_old_inputs=True,
+                    )
+
+            state.inference_session.obj_with_new_inputs = list(frame_obj_ids)
+            outputs = model(
+                inference_session=state.inference_session,
+                frame_idx=int(frame_idx),
+            )
+            _store_frame_masks_from_outputs(
+                state,
+                processor,
+                outputs,
+                int(frame_idx),
+                fallback_obj_ids=frame_obj_ids,
+            )
+            initialized_frames.add(int(frame_idx))
+
+    state.inference_session.obj_with_new_inputs = []
+    return initialized_frames
+
+def _clear_masks_for_object_all_frames(state: "AppState", obj_id: int) -> None:
+    if state is None:
+        return
+    oid = int(obj_id)
+    changed_frames = []
+    for frame_idx, masks in list(state.masks_by_frame.items()):
+        if not isinstance(masks, dict):
+            continue
+        if oid in masks:
+            masks.pop(oid, None)
+            changed_frames.append(int(frame_idx))
+        if not masks:
+            state.masks_by_frame.pop(frame_idx, None)
+    for frame_idx in changed_frames:
+        state.composited_frames.pop(frame_idx, None)
+
 def _to_int_list(x):
     if x is None:
         return None
@@ -777,35 +917,7 @@ def on_image_click(
         x_min, y_min = min(x1, x2), min(y1, y2)
         x_max, y_max = max(x1, x2), max(y1, y2)
 
-        box3 = [[[x_min, y_min, x_max, y_max]]]
         _clear_points_for_object_all_frames(state, ann_obj_id)
-        try:
-            _call_add_inputs(
-                processor,
-                inference_session=state.inference_session,
-                frame_idx=ann_frame_idx,
-                obj_ids=[ann_obj_id],
-                input_boxes=box3,
-                clear_old_points=True,
-                clear_old_boxes=True,
-                clear_old_inputs=True,
-            )
-        except ValueError as e:
-            msg = str(e)
-            if "nested list with 4 levels" in msg or "Got 3 levels" in msg:
-                box4 = [box3]  # [[[[x1,y1,x2,y2]]]]
-                _call_add_inputs(
-                    processor,
-                    inference_session=state.inference_session,
-                    frame_idx=ann_frame_idx,
-                    obj_ids=[ann_obj_id],
-                    input_boxes=box4,
-                    clear_old_points=True,
-                    clear_old_boxes=True,
-                    clear_old_inputs=True,
-                )
-            else:
-                raise
 
         frame_boxes = state.boxes_by_frame_obj.setdefault(ann_frame_idx, {})
         obj_boxes = frame_boxes.setdefault(ann_obj_id, [])
@@ -825,51 +937,25 @@ def on_image_click(
             frame_boxes[ann_obj_id] = []
 
         obj_clicks.append((int(x), int(y), int(label_int)))
-
-        points = [[[[c[0], c[1]] for c in obj_clicks]]]
-        labels = [[[c[2] for c in obj_clicks]]]
-
-        _call_add_inputs(
-            processor,
-            inference_session=state.inference_session,
-            frame_idx=ann_frame_idx,
-            obj_ids=[ann_obj_id],
-            input_points=points,
-            input_labels=labels,
-            clear_old_inputs=bool(clear_old),
-        )
         state.last_annotated_frame_idx = ann_frame_idx
         state.composited_frames.pop(ann_frame_idx, None)
 
-    # run inference for that frame
-    with torch.no_grad():
-        outputs = model(
-            inference_session=state.inference_session,
-            frame_idx=ann_frame_idx,
+    _clear_masks_for_object_all_frames(state, ann_obj_id)
+    initialized_frames = _rebuild_tracking_state_from_prompts(state, model, processor)
+    if ann_frame_idx not in initialized_frames:
+        with torch.no_grad():
+            outputs = model(
+                inference_session=state.inference_session,
+                frame_idx=ann_frame_idx,
+            )
+        _store_frame_masks_from_outputs(
+            state,
+            processor,
+            outputs,
+            ann_frame_idx,
+            fallback_obj_ids=[ann_obj_id],
         )
 
-    processed = processor.post_process_masks(
-        [outputs.pred_masks],
-        [[state.inference_session.video_height, state.inference_session.video_width]],
-        binarize=False,
-    )[0]
-
-    out_obj_ids = _to_int_list(getattr(outputs, "object_ids", None))
-    if out_obj_ids is None:
-        out_obj_ids = [ann_obj_id]
-
-    masks = _normalize_masks(processed, out_obj_ids)  # (K,H,W)
-    K = masks.shape[0]
-    if len(out_obj_ids) != K:
-        out_obj_ids = out_obj_ids[:K]
-
-    masks_for_frame = state.masks_by_frame.setdefault(ann_frame_idx, {})
-    for k, oid in enumerate(out_obj_ids):
-        _ensure_color_for_obj(state.color_by_obj, int(oid))
-        mask_2d = (masks[k] > 0.0).to(torch.uint8).cpu().numpy()
-        masks_for_frame[int(oid)] = mask_2d
-
-    state.composited_frames.pop(ann_frame_idx, None)
     return update_frame_display(state, ann_frame_idx), state
 
 # -------------------------
