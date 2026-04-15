@@ -440,7 +440,7 @@ def _call_add_inputs(processor, **kwargs):
     filtered = {k: v for k, v in kwargs.items() if k in sig.parameters}
     return processor.add_inputs_to_inference_session(**filtered)
 
-def _clear_points_for_object_all_frames(state: "AppState", obj_id: int) -> None:
+def _deprecated_clear_points_for_object_all_frames(state: "AppState", obj_id: int) -> None:
     """
     Box を入れるときに「point が既に入っていると box を追加できない」版があるため、
     UI 側の cross 表示と整合させるために、該当 obj_id の point 記録を全フレームで消す。
@@ -482,10 +482,16 @@ def _store_frame_masks_from_outputs(
     outputs,
     frame_idx: int,
     fallback_obj_ids: Optional[List[int]] = None,
+    target_masks_by_frame: Optional[Dict[int, Dict[int, np.ndarray]]] = None,
+    inference_session=None,
 ) -> None:
+    session = inference_session or state.inference_session
+    if session is None:
+        raise gr.Error("Inference session is not initialized.")
+
     processed = processor.post_process_masks(
         [outputs.pred_masks],
-        [[state.inference_session.video_height, state.inference_session.video_width]],
+        [[session.video_height, session.video_width]],
         binarize=False,
     )[0]
 
@@ -498,12 +504,14 @@ def _store_frame_masks_from_outputs(
     if len(out_obj_ids) != k_count:
         out_obj_ids = out_obj_ids[:k_count]
 
-    masks_for_frame = state.masks_by_frame.setdefault(int(frame_idx), {})
+    target = state.masks_by_frame if target_masks_by_frame is None else target_masks_by_frame
+    masks_for_frame = target.setdefault(int(frame_idx), {})
     for k, oid in enumerate(out_obj_ids):
         _ensure_color_for_obj(state.color_by_obj, int(oid))
         mask_2d = (masks[k] > 0.0).to(torch.uint8).cpu().numpy()
         masks_for_frame[int(oid)] = mask_2d
-    state.composited_frames.pop(int(frame_idx), None)
+    if target is state.masks_by_frame:
+        state.composited_frames.pop(int(frame_idx), None)
 
 def _rebuild_tracking_state_from_prompts(state: "AppState", model, processor) -> set[int]:
     if state is None or state.inference_session is None:
@@ -582,6 +590,267 @@ def _rebuild_tracking_state_from_prompts(state: "AppState", model, processor) ->
 
     state.inference_session.obj_with_new_inputs = []
     return initialized_frames
+
+def _clear_points_for_frame_object(state: "AppState", frame_idx: int, obj_id: int) -> None:
+    if state is None:
+        return
+    fidx = int(frame_idx)
+    oid = int(obj_id)
+    frame_clicks = state.clicks_by_frame_obj.get(fidx)
+    if not isinstance(frame_clicks, dict):
+        return
+    if oid in frame_clicks and frame_clicks[oid]:
+        frame_clicks[oid] = []
+        state.composited_frames.pop(fidx, None)
+
+def _collect_object_prompt_entries(state: "AppState", obj_id: int) -> List[Tuple[int, str, Any]]:
+    entries: List[Tuple[int, str, Any]] = []
+    oid = int(obj_id)
+    frame_indices = set()
+    for frame_idx, obj_map in state.clicks_by_frame_obj.items():
+        if isinstance(obj_map, dict) and (obj_map.get(oid) or []):
+            frame_indices.add(int(frame_idx))
+    for frame_idx, obj_map in state.boxes_by_frame_obj.items():
+        if isinstance(obj_map, dict) and (obj_map.get(oid) or []):
+            frame_indices.add(int(frame_idx))
+
+    for frame_idx in sorted(frame_indices):
+        boxes = ((state.boxes_by_frame_obj.get(frame_idx) or {}).get(oid) or [])
+        points = ((state.clicks_by_frame_obj.get(frame_idx) or {}).get(oid) or [])
+        if boxes:
+            entries.append((frame_idx, "box", boxes[-1]))
+        elif points:
+            entries.append((frame_idx, "points", list(points)))
+    return entries
+
+def _collect_all_prompt_entries(state: "AppState") -> List[Tuple[int, int, str, Any]]:
+    return _iter_prompt_entries(state)
+
+def _add_box_prompt_to_session(processor, inference_session, frame_idx: int, obj_id: int, box) -> None:
+    x1, y1, x2, y2 = box
+    box3 = [[[int(x1), int(y1), int(x2), int(y2)]]]
+    try:
+        _call_add_inputs(
+            processor,
+            inference_session=inference_session,
+            frame_idx=int(frame_idx),
+            obj_ids=[int(obj_id)],
+            input_boxes=box3,
+            clear_old_inputs=True,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if "nested list with 4 levels" in msg or "Got 3 levels" in msg:
+            _call_add_inputs(
+                processor,
+                inference_session=inference_session,
+                frame_idx=int(frame_idx),
+                obj_ids=[int(obj_id)],
+                input_boxes=[box3],
+                clear_old_inputs=True,
+            )
+        else:
+            raise
+
+def _add_points_prompt_to_session(processor, inference_session, frame_idx: int, obj_id: int, payload) -> None:
+    points = [[[[int(c[0]), int(c[1])] for c in payload]]]
+    labels = [[[int(c[2]) for c in payload]]]
+    _call_add_inputs(
+        processor,
+        inference_session=inference_session,
+        frame_idx=int(frame_idx),
+        obj_ids=[int(obj_id)],
+        input_points=points,
+        input_labels=labels,
+        clear_old_inputs=True,
+    )
+
+def _make_temp_session(state: "AppState", processor):
+    if state is None or state.inference_session is None:
+        raise RuntimeError("Inference session is not initialized.")
+
+    main_session = state.inference_session
+    kwargs = dict(
+        inference_device=getattr(main_session, "inference_device", torch.device(_JOB_DEVICE)),
+        inference_state_device=getattr(
+            main_session,
+            "inference_state_device",
+            getattr(main_session, "inference_device", torch.device(_JOB_DEVICE)),
+        ),
+        video_storage_device=getattr(main_session, "video_storage_device", "cpu"),
+        dtype=getattr(main_session, "dtype", _JOB_DTYPE),
+        max_vision_features_cache_size=int(getattr(main_session, "max_vision_features_cache_size", 1) or 1),
+    )
+    try:
+        temp_session = _call_init_video_session(processor, **kwargs)
+    except Exception:
+        raw_video = [np.array(fr) for fr in state.video_frames]
+        try:
+            temp_session = _call_init_video_session(
+                processor,
+                video=raw_video,
+                processing_device=getattr(main_session, "video_storage_device", "cpu"),
+                **kwargs,
+            )
+        finally:
+            del raw_video
+
+    if getattr(main_session, "processed_frames", None) is not None:
+        temp_session.processed_frames = main_session.processed_frames
+    if getattr(main_session, "video_height", None) is not None:
+        temp_session.video_height = main_session.video_height
+    if getattr(main_session, "video_width", None) is not None:
+        temp_session.video_width = main_session.video_width
+    if hasattr(main_session, "cache") and hasattr(temp_session, "cache"):
+        temp_session.cache = main_session.cache
+    return temp_session
+
+def _get_session_obj_idx(inference_session, obj_id: int) -> Optional[int]:
+    if inference_session is None:
+        return None
+    mapping = getattr(inference_session, "_obj_id_to_idx", None)
+    if isinstance(mapping, dict):
+        obj_idx = mapping.get(int(obj_id))
+        if obj_idx is not None:
+            return int(obj_idx)
+    obj_ids = getattr(inference_session, "obj_ids", None)
+    if isinstance(obj_ids, list):
+        try:
+            return [int(v) for v in obj_ids].index(int(obj_id))
+        except ValueError:
+            return None
+    return None
+
+def _ensure_session_obj_idx(inference_session, obj_id: int) -> int:
+    obj_idx = _get_session_obj_idx(inference_session, obj_id)
+    if obj_idx is not None:
+        return obj_idx
+
+    mapper = getattr(inference_session, "obj_id_to_idx", None)
+    if callable(mapper):
+        return int(mapper(int(obj_id)))
+
+    mapping = getattr(inference_session, "_obj_id_to_idx", None)
+    reverse = getattr(inference_session, "_obj_idx_to_id", None)
+    obj_ids = getattr(inference_session, "obj_ids", None)
+    if not isinstance(mapping, dict) or not isinstance(reverse, dict) or not isinstance(obj_ids, list):
+        raise RuntimeError("Inference session does not expose object mapping structures.")
+
+    obj_idx = len(mapping)
+    mapping[int(obj_id)] = obj_idx
+    reverse[obj_idx] = int(obj_id)
+    inference_session.obj_ids = list(mapping)
+    if isinstance(getattr(inference_session, "point_inputs_per_obj", None), dict):
+        inference_session.point_inputs_per_obj[obj_idx] = {}
+    if isinstance(getattr(inference_session, "mask_inputs_per_obj", None), dict):
+        inference_session.mask_inputs_per_obj[obj_idx] = {}
+    if isinstance(getattr(inference_session, "output_dict_per_obj", None), dict):
+        inference_session.output_dict_per_obj[obj_idx] = {"cond_frame_outputs": {}, "non_cond_frame_outputs": {}}
+    if isinstance(getattr(inference_session, "frames_tracked_per_obj", None), dict):
+        inference_session.frames_tracked_per_obj[obj_idx] = {}
+    return obj_idx
+
+def _replay_object_prompts_into_session(
+    state: "AppState",
+    model,
+    processor,
+    obj_id: int,
+    inference_session,
+    target_masks_by_frame: Optional[Dict[int, Dict[int, np.ndarray]]] = None,
+) -> set[int]:
+    entries = _collect_object_prompt_entries(state, obj_id)
+    initialized_frames: set[int] = set()
+    if not entries:
+        return initialized_frames
+
+    with torch.no_grad():
+        for frame_idx, prompt_kind, payload in entries:
+            _ensure_color_for_obj(state.color_by_obj, int(obj_id))
+            if prompt_kind == "box":
+                _add_box_prompt_to_session(processor, inference_session, frame_idx, obj_id, payload)
+            else:
+                _add_points_prompt_to_session(processor, inference_session, frame_idx, obj_id, payload)
+
+            inference_session.obj_with_new_inputs = [int(obj_id)]
+            outputs = model(
+                inference_session=inference_session,
+                frame_idx=int(frame_idx),
+            )
+            _store_frame_masks_from_outputs(
+                state,
+                processor,
+                outputs,
+                int(frame_idx),
+                fallback_obj_ids=[int(obj_id)],
+                target_masks_by_frame=target_masks_by_frame,
+                inference_session=inference_session,
+            )
+            initialized_frames.add(int(frame_idx))
+
+    inference_session.obj_with_new_inputs = []
+    return initialized_frames
+
+def _replace_object_state_from_temp_session(main_session, temp_session, obj_id: int) -> None:
+    main_idx = _ensure_session_obj_idx(main_session, obj_id)
+    temp_idx = _get_session_obj_idx(temp_session, obj_id)
+    if temp_idx is None:
+        raise RuntimeError(f"Object {obj_id} not found in temp session.")
+
+    required_attrs = ("point_inputs_per_obj", "mask_inputs_per_obj", "output_dict_per_obj", "frames_tracked_per_obj")
+    for attr_name in required_attrs:
+        source_container = getattr(temp_session, attr_name, None)
+        target_container = getattr(main_session, attr_name, None)
+        if not isinstance(source_container, dict) or not isinstance(target_container, dict):
+            raise RuntimeError(f"Unsupported session structure: missing dict attr {attr_name}.")
+        if temp_idx not in source_container:
+            raise RuntimeError(f"Temp session is missing object state for {attr_name}.")
+        target_container[main_idx] = source_container[temp_idx]
+
+    for attr_name, source_container in vars(temp_session).items():
+        if attr_name in required_attrs or not attr_name.endswith("_per_obj"):
+            continue
+        target_container = getattr(main_session, attr_name, None)
+        if isinstance(source_container, dict) and isinstance(target_container, dict) and temp_idx in source_container:
+            target_container[main_idx] = source_container[temp_idx]
+
+    if hasattr(main_session, "obj_with_new_inputs"):
+        main_session.obj_with_new_inputs = []
+
+def _rebuild_all_objects_from_prompts(state: "AppState", model, processor) -> set[int]:
+    return _rebuild_tracking_state_from_prompts(state, model, processor)
+
+def _rebuild_object_from_prompts(state: "AppState", model, processor, obj_id: int) -> set[int]:
+    if state is None or state.inference_session is None:
+        return set()
+
+    prompt_masks_by_frame: Dict[int, Dict[int, np.ndarray]] = {}
+    try:
+        temp_session = _make_temp_session(state, processor)
+        initialized_frames = _replay_object_prompts_into_session(
+            state,
+            model,
+            processor,
+            int(obj_id),
+            temp_session,
+            target_masks_by_frame=prompt_masks_by_frame,
+        )
+        if not initialized_frames:
+            raise RuntimeError("Object replay did not produce any prompt frame masks.")
+
+        _replace_object_state_from_temp_session(state.inference_session, temp_session, int(obj_id))
+        for frame_idx, masks in prompt_masks_by_frame.items():
+            if int(obj_id) not in masks:
+                continue
+            masks_for_frame = state.masks_by_frame.setdefault(int(frame_idx), {})
+            masks_for_frame[int(obj_id)] = masks[int(obj_id)]
+            state.composited_frames.pop(int(frame_idx), None)
+
+        state.inference_session.obj_with_new_inputs = []
+        return initialized_frames
+    except Exception as exc:
+        print(f"[WARN] object rebuild fallback -> full rebuild (obj_id={int(obj_id)}): {exc}")
+        traceback.print_exc()
+        return _rebuild_all_objects_from_prompts(state, model, processor)
 
 def _clear_masks_for_object_all_frames(state: "AppState", obj_id: int) -> None:
     if state is None:
@@ -900,8 +1169,6 @@ def on_image_click(
     if str(prompt_type).lower() == "boxes":
         # 2-click box
         if state.pending_box_start is None:
-            frame_clicks = state.clicks_by_frame_obj.setdefault(ann_frame_idx, {})
-            frame_clicks[ann_obj_id] = []
             state.composited_frames.pop(ann_frame_idx, None)
             state.pending_box_start = (int(x), int(y))
             state.pending_box_start_frame_idx = ann_frame_idx
@@ -917,7 +1184,7 @@ def on_image_click(
         x_min, y_min = min(x1, x2), min(y1, y2)
         x_max, y_max = max(x1, x2), max(y1, y2)
 
-        _clear_points_for_object_all_frames(state, ann_obj_id)
+        _clear_points_for_frame_object(state, ann_frame_idx, ann_obj_id)
 
         frame_boxes = state.boxes_by_frame_obj.setdefault(ann_frame_idx, {})
         obj_boxes = frame_boxes.setdefault(ann_obj_id, [])
@@ -928,6 +1195,10 @@ def on_image_click(
 
     else:
         label_int = 1 if str(label).lower().startswith("pos") else 0
+        existing_boxes = ((state.boxes_by_frame_obj.get(ann_frame_idx) or {}).get(ann_obj_id) or [])
+        if existing_boxes:
+            return update_frame_display(state, ann_frame_idx), state
+
         frame_clicks = state.clicks_by_frame_obj.setdefault(ann_frame_idx, {})
         obj_clicks = frame_clicks.setdefault(ann_obj_id, [])
 
@@ -941,20 +1212,7 @@ def on_image_click(
         state.composited_frames.pop(ann_frame_idx, None)
 
     _clear_masks_for_object_all_frames(state, ann_obj_id)
-    initialized_frames = _rebuild_tracking_state_from_prompts(state, model, processor)
-    if ann_frame_idx not in initialized_frames:
-        with torch.no_grad():
-            outputs = model(
-                inference_session=state.inference_session,
-                frame_idx=ann_frame_idx,
-            )
-        _store_frame_masks_from_outputs(
-            state,
-            processor,
-            outputs,
-            ann_frame_idx,
-            fallback_obj_ids=[ann_obj_id],
-        )
+    _rebuild_object_from_prompts(state, model, processor, ann_obj_id)
 
     return update_frame_display(state, ann_frame_idx), state
 
