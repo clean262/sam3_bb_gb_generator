@@ -459,6 +459,17 @@ def _deprecated_clear_points_for_object_all_frames(state: "AppState", obj_id: in
     for f in changed_frames:
         state.composited_frames.pop(f, None)
 
+def _iter_frame_object_prompt_kinds(
+    boxes: List[Tuple[int, int, int, int]],
+    points: List[Tuple[int, int, int]],
+) -> List[Tuple[str, Any]]:
+    entries: List[Tuple[str, Any]] = []
+    if boxes:
+        entries.append(("box", boxes[-1]))
+    if points:
+        entries.append(("points", list(points)))
+    return entries
+
 def _iter_prompt_entries(state: "AppState") -> List[Tuple[int, int, str, Any]]:
     entries: List[Tuple[int, int, str, Any]] = []
     frame_indices = set(state.clicks_by_frame_obj.keys()) | set(state.boxes_by_frame_obj.keys())
@@ -469,11 +480,8 @@ def _iter_prompt_entries(state: "AppState") -> List[Tuple[int, int, str, Any]]:
         for obj_id in sorted(int(o) for o in obj_ids):
             boxes = ((state.boxes_by_frame_obj.get(frame_idx) or {}).get(obj_id) or [])
             points = ((state.clicks_by_frame_obj.get(frame_idx) or {}).get(obj_id) or [])
-            if boxes:
-                # Prefer boxes when both exist for the same frame/object.
-                entries.append((frame_idx, obj_id, "box", boxes[-1]))
-            elif points:
-                entries.append((frame_idx, obj_id, "points", list(points)))
+            for prompt_kind, payload in _iter_frame_object_prompt_kinds(boxes, points):
+                entries.append((int(frame_idx), int(obj_id), prompt_kind, payload))
     return entries
 
 def _store_frame_masks_from_outputs(
@@ -529,50 +537,13 @@ def _rebuild_tracking_state_from_prompts(state: "AppState", model, processor) ->
     with torch.no_grad():
         for frame_idx in sorted(frame_to_entries.keys()):
             frame_entries = frame_to_entries[frame_idx]
-            frame_obj_ids = sorted({int(obj_id) for _, obj_id, _, _ in frame_entries})
-            for _entry_frame_idx, obj_id, prompt_kind, payload in frame_entries:
-                _ensure_color_for_obj(state.color_by_obj, obj_id)
-                if prompt_kind == "box":
-                    x1, y1, x2, y2 = payload
-                    box3 = [[[int(x1), int(y1), int(x2), int(y2)]]]
-                    try:
-                        _call_add_inputs(
-                            processor,
-                            inference_session=state.inference_session,
-                            frame_idx=int(frame_idx),
-                            obj_ids=[int(obj_id)],
-                            input_boxes=box3,
-                            clear_old_points=True,
-                            clear_old_boxes=True,
-                            clear_old_inputs=True,
-                        )
-                    except ValueError as e:
-                        msg = str(e)
-                        if "nested list with 4 levels" in msg or "Got 3 levels" in msg:
-                            _call_add_inputs(
-                                processor,
-                                inference_session=state.inference_session,
-                                frame_idx=int(frame_idx),
-                                obj_ids=[int(obj_id)],
-                                input_boxes=[box3],
-                                clear_old_points=True,
-                                clear_old_boxes=True,
-                                clear_old_inputs=True,
-                            )
-                        else:
-                            raise
-                else:
-                    points = [[[[int(c[0]), int(c[1])] for c in payload]]]
-                    labels = [[[int(c[2]) for c in payload]]]
-                    _call_add_inputs(
-                        processor,
-                        inference_session=state.inference_session,
-                        frame_idx=int(frame_idx),
-                        obj_ids=[int(obj_id)],
-                        input_points=points,
-                        input_labels=labels,
-                        clear_old_inputs=True,
-                    )
+            frame_obj_ids = _apply_frame_prompt_entries_to_session(
+                state,
+                processor,
+                state.inference_session,
+                int(frame_idx),
+                frame_entries,
+            )
 
             state.inference_session.obj_with_new_inputs = list(frame_obj_ids)
             outputs = model(
@@ -603,8 +574,8 @@ def _clear_points_for_frame_object(state: "AppState", frame_idx: int, obj_id: in
         frame_clicks[oid] = []
         state.composited_frames.pop(fidx, None)
 
-def _collect_object_prompt_entries(state: "AppState", obj_id: int) -> List[Tuple[int, str, Any]]:
-    entries: List[Tuple[int, str, Any]] = []
+def _collect_object_prompt_entries(state: "AppState", obj_id: int) -> List[Tuple[int, int, str, Any]]:
+    entries: List[Tuple[int, int, str, Any]] = []
     oid = int(obj_id)
     frame_indices = set()
     for frame_idx, obj_map in state.clicks_by_frame_obj.items():
@@ -617,16 +588,22 @@ def _collect_object_prompt_entries(state: "AppState", obj_id: int) -> List[Tuple
     for frame_idx in sorted(frame_indices):
         boxes = ((state.boxes_by_frame_obj.get(frame_idx) or {}).get(oid) or [])
         points = ((state.clicks_by_frame_obj.get(frame_idx) or {}).get(oid) or [])
-        if boxes:
-            entries.append((frame_idx, "box", boxes[-1]))
-        elif points:
-            entries.append((frame_idx, "points", list(points)))
+        for prompt_kind, payload in _iter_frame_object_prompt_kinds(boxes, points):
+            entries.append((int(frame_idx), int(oid), prompt_kind, payload))
     return entries
 
 def _collect_all_prompt_entries(state: "AppState") -> List[Tuple[int, int, str, Any]]:
     return _iter_prompt_entries(state)
 
-def _add_box_prompt_to_session(processor, inference_session, frame_idx: int, obj_id: int, box) -> None:
+def _add_box_prompt_to_session(
+    processor,
+    inference_session,
+    frame_idx: int,
+    obj_id: int,
+    box,
+    *,
+    clear_old_inputs: bool = True,
+) -> None:
     x1, y1, x2, y2 = box
     box3 = [[[int(x1), int(y1), int(x2), int(y2)]]]
     try:
@@ -636,7 +613,7 @@ def _add_box_prompt_to_session(processor, inference_session, frame_idx: int, obj
             frame_idx=int(frame_idx),
             obj_ids=[int(obj_id)],
             input_boxes=box3,
-            clear_old_inputs=True,
+            clear_old_inputs=bool(clear_old_inputs),
         )
     except ValueError as e:
         msg = str(e)
@@ -647,12 +624,20 @@ def _add_box_prompt_to_session(processor, inference_session, frame_idx: int, obj
                 frame_idx=int(frame_idx),
                 obj_ids=[int(obj_id)],
                 input_boxes=[box3],
-                clear_old_inputs=True,
+                clear_old_inputs=bool(clear_old_inputs),
             )
         else:
             raise
 
-def _add_points_prompt_to_session(processor, inference_session, frame_idx: int, obj_id: int, payload) -> None:
+def _add_points_prompt_to_session(
+    processor,
+    inference_session,
+    frame_idx: int,
+    obj_id: int,
+    payload,
+    *,
+    clear_old_inputs: bool = False,
+) -> None:
     points = [[[[int(c[0]), int(c[1])] for c in payload]]]
     labels = [[[int(c[2]) for c in payload]]]
     _call_add_inputs(
@@ -662,8 +647,38 @@ def _add_points_prompt_to_session(processor, inference_session, frame_idx: int, 
         obj_ids=[int(obj_id)],
         input_points=points,
         input_labels=labels,
-        clear_old_inputs=True,
+        clear_old_inputs=bool(clear_old_inputs),
     )
+
+def _apply_frame_prompt_entries_to_session(
+    state: "AppState",
+    processor,
+    inference_session,
+    frame_idx: int,
+    frame_entries: List[Tuple[int, int, str, Any]],
+) -> List[int]:
+    frame_obj_ids = sorted({int(obj_id) for _, obj_id, _, _ in frame_entries})
+    for _entry_frame_idx, obj_id, prompt_kind, payload in frame_entries:
+        _ensure_color_for_obj(state.color_by_obj, int(obj_id))
+        if prompt_kind == "box":
+            _add_box_prompt_to_session(
+                processor,
+                inference_session,
+                int(frame_idx),
+                int(obj_id),
+                payload,
+                clear_old_inputs=True,
+            )
+        else:
+            _add_points_prompt_to_session(
+                processor,
+                inference_session,
+                int(frame_idx),
+                int(obj_id),
+                payload,
+                clear_old_inputs=False,
+            )
+    return frame_obj_ids
 
 def _make_temp_session(state: "AppState", processor):
     if state is None or state.inference_session is None:
@@ -763,15 +778,23 @@ def _replay_object_prompts_into_session(
     if not entries:
         return initialized_frames
 
-    with torch.no_grad():
-        for frame_idx, prompt_kind, payload in entries:
-            _ensure_color_for_obj(state.color_by_obj, int(obj_id))
-            if prompt_kind == "box":
-                _add_box_prompt_to_session(processor, inference_session, frame_idx, obj_id, payload)
-            else:
-                _add_points_prompt_to_session(processor, inference_session, frame_idx, obj_id, payload)
+    frame_to_entries: Dict[int, List[Tuple[int, int, str, Any]]] = {}
+    for frame_idx, entry_obj_id, prompt_kind, payload in entries:
+        frame_to_entries.setdefault(int(frame_idx), []).append(
+            (int(frame_idx), int(entry_obj_id), prompt_kind, payload)
+        )
 
-            inference_session.obj_with_new_inputs = [int(obj_id)]
+    with torch.no_grad():
+        for frame_idx in sorted(frame_to_entries.keys()):
+            frame_entries = frame_to_entries[frame_idx]
+            frame_obj_ids = _apply_frame_prompt_entries_to_session(
+                state,
+                processor,
+                inference_session,
+                int(frame_idx),
+                frame_entries,
+            )
+            inference_session.obj_with_new_inputs = list(frame_obj_ids)
             outputs = model(
                 inference_session=inference_session,
                 frame_idx=int(frame_idx),
@@ -781,7 +804,7 @@ def _replay_object_prompts_into_session(
                 processor,
                 outputs,
                 int(frame_idx),
-                fallback_obj_ids=[int(obj_id)],
+                fallback_obj_ids=frame_obj_ids,
                 target_masks_by_frame=target_masks_by_frame,
                 inference_session=inference_session,
             )
@@ -1195,10 +1218,6 @@ def on_image_click(
 
     else:
         label_int = 1 if str(label).lower().startswith("pos") else 0
-        existing_boxes = ((state.boxes_by_frame_obj.get(ann_frame_idx) or {}).get(ann_obj_id) or [])
-        if existing_boxes:
-            return update_frame_display(state, ann_frame_idx), state
-
         frame_clicks = state.clicks_by_frame_obj.setdefault(ann_frame_idx, {})
         obj_clicks = frame_clicks.setdefault(ann_obj_id, [])
 
