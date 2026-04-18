@@ -1,3 +1,4 @@
+#pragma once
 //----------------------------------------------------------------------------------
 //	スクリプトモジュール ヘッダーファイル for AviUtl ExEdit2
 //	By ＫＥＮくん
@@ -174,6 +175,17 @@ struct SCRIPT_MODULE_PARAM {
 	// key			: キー名(UTF-8)
 	// 戻り値		: 引数の値 (取得出来ない場合はfalse)
 	bool (*get_param_table_boolean)(int index, LPCSTR key);
+
+	// ブール値配列の戻り値を追加する
+	// value		: 戻り値の配列
+	// num			: 配列の要素数
+	void (*push_result_array_boolean)(bool* value, int num);
+
+	// ブール値連想配列の戻り値を追加する
+	// key			: キー名(UTF-8)の配列
+	// value		: 戻り値の配列
+	// num			: 配列の要素数
+	void (*push_result_table_boolean)(LPCSTR* key, bool* value, int num);
 
 };
 

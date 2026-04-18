@@ -1,3 +1,4 @@
+#pragma once
 //----------------------------------------------------------------------------------
 //	フィルタプラグイン ヘッダーファイル for AviUtl ExEdit2
 //	By ＫＥＮくん
@@ -35,7 +36,7 @@ struct FILTER_ITEM_TRACK {
 	LPCWSTR name;				// 設定名
 	double value;				// 設定値 (フィルタ処理の呼び出し時に現在の値に更新されます)
 	const double s, e;			// 設定値の最小、最大
-	const double step;			// 設定値の単位( 1.0 / 0.1 / 0.01 / 0.001 )
+	const double step;			// 設定値の単位( 1.0 / 0.1 / 0.01 / 0.001 ) ※0.0001以下も指定出来ますが最大最小値の範囲に応じて調整されます
 };
 
 // チェックボックス項目構造体
@@ -120,7 +121,7 @@ struct FILTER_ITEM_BUTTON {
 	FILTER_ITEM_BUTTON(LPCWSTR name, void (*callback)(EDIT_SECTION* edit)) : name(name), callback(callback) {}
 	LPCWSTR type = L"button";			// 設定の種別
 	LPCWSTR name;						// 設定名
-	void (*callback)(EDIT_SECTION*);	// ボタンを押した時のコールバック関数
+	void (*callback)(EDIT_SECTION*);	// ボタンを押した時のコールバック関数 (呼び出し時に各設定項目の設定値が更新されます)
 };
 
 // 文字列項目構造体 ※1行の文字列
@@ -148,6 +149,14 @@ struct FILTER_ITEM_FOLDER {
 	LPCWSTR type = L"folder";	// 設定の種別
 	LPCWSTR name;				// 設定名
 	LPCWSTR value;				// 設定値 (フィルタ処理の呼び出し時に現在の値のポインタに更新されます)
+};
+
+// セパレーター項目構造体
+// 例：FILTER_ITEM_SEPARATOR separator = { L"中心座標" };
+struct FILTER_ITEM_SEPARATOR {
+	FILTER_ITEM_SEPARATOR(LPCWSTR name) : name(name) {}
+	LPCWSTR type = L"separator";	// 設定の種別
+	LPCWSTR name;					// 設定名
 };
 
 //----------------------------------------------------------------------------------

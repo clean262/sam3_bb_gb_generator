@@ -1,3 +1,4 @@
+#pragma once
 //----------------------------------------------------------------------------------
 //	出力プラグイン ヘッダーファイル for AviUtl ExEdit2
 //	By ＫＥＮくん
@@ -78,9 +79,11 @@ struct OUTPUT_INFO {
 
 // 出力プラグイン構造体
 struct OUTPUT_PLUGIN_TABLE {
-	int flag;				// フラグ ※未使用
+	int flag;				// フラグ
 	static constexpr int FLAG_VIDEO = 1; //	画像をサポートする
 	static constexpr int FLAG_AUDIO = 2; //	音声をサポートする
+	static constexpr int FLAG_IMAGE = 4; //	静止画出力のみサポートする (OUTPUT_INFOが1フレーム出力になります)
+										 // ※静止画出力では出力完了時の通知やサウンド再生をしません
 	LPCWSTR name;			// プラグインの名前
 	LPCWSTR filefilter;		// ファイルのフィルタ
 	LPCWSTR information;	// プラグインの情報
