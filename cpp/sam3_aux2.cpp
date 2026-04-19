@@ -1435,10 +1435,35 @@ static void LayoutChildControls(HWND hwnd) {
     if (!hdwp) return;
 
     bool top_single_row = (capture_min_w + gap + label_w + gap + combo_min_w) <= content_w;
+    bool action_single_row = (run_min_w + gap + open_min_w) <= content_w;
+
+    int aligned_aux_w = 0;
+    bool use_aligned_single_row = false;
+    if (top_single_row && action_single_row) {
+        int top_combo_w = std::min(combo_pref_w, std::max(combo_min_w, content_w / 3));
+        top_combo_w = std::min(top_combo_w, std::max(combo_min_w, content_w - capture_min_w - label_w - gap * 2));
+        int top_aux_w = label_w + gap + top_combo_w;
+
+        int open_pref_w = std::max(open_min_w, MulDiv(170, (int)dpi, 96));
+        int open_w = std::min(open_pref_w, std::max(open_min_w, content_w / 3));
+        open_w = std::min(open_w, std::max(open_min_w, content_w - run_min_w - gap));
+
+        aligned_aux_w = std::max(top_aux_w, open_w);
+        int aligned_left_w = content_w - gap - aligned_aux_w;
+        use_aligned_single_row = (aligned_left_w >= capture_min_w) && (aligned_left_w >= run_min_w);
+    }
+
     if (top_single_row) {
-        int combo_w = std::min(combo_pref_w, std::max(combo_min_w, content_w / 3));
-        combo_w = std::min(combo_w, std::max(combo_min_w, content_w - capture_min_w - label_w - gap * 2));
-        int capture_w = std::max(0, content_w - label_w - combo_w - gap * 2);
+        int combo_w = 0;
+        int capture_w = 0;
+        if (use_aligned_single_row) {
+            combo_w = std::max(combo_min_w, aligned_aux_w - label_w - gap);
+            capture_w = std::max(0, content_w - aligned_aux_w - gap);
+        } else {
+            combo_w = std::min(combo_pref_w, std::max(combo_min_w, content_w / 3));
+            combo_w = std::min(combo_w, std::max(combo_min_w, content_w - capture_min_w - label_w - gap * 2));
+            capture_w = std::max(0, content_w - label_w - combo_w - gap * 2);
+        }
         int label_x = margin + capture_w + gap;
         int combo_x = label_x + label_w + gap;
 
@@ -1475,12 +1500,18 @@ static void LayoutChildControls(HWND hwnd) {
         SWP_NOZORDER | SWP_NOACTIVATE);
 
     y += row_h + gap;
-    bool action_single_row = (run_min_w + gap + open_min_w) <= content_w;
     if (action_single_row) {
-        int open_pref_w = std::max(open_min_w, MulDiv(170, (int)dpi, 96));
-        int open_w = std::min(open_pref_w, std::max(open_min_w, content_w / 3));
-        open_w = std::min(open_w, std::max(open_min_w, content_w - run_min_w - gap));
-        int run_w = std::max(0, content_w - open_w - gap);
+        int open_w = 0;
+        int run_w = 0;
+        if (use_aligned_single_row) {
+            open_w = aligned_aux_w;
+            run_w = std::max(0, content_w - open_w - gap);
+        } else {
+            int open_pref_w = std::max(open_min_w, MulDiv(170, (int)dpi, 96));
+            open_w = std::min(open_pref_w, std::max(open_min_w, content_w / 3));
+            open_w = std::min(open_w, std::max(open_min_w, content_w - run_min_w - gap));
+            run_w = std::max(0, content_w - open_w - gap);
+        }
 
         hdwp = DeferWindowPos(hdwp, g_btn_run, nullptr, margin, y, run_w, row_h,
             SWP_NOZORDER | SWP_NOACTIVATE);
