@@ -1235,6 +1235,7 @@ static HWND g_label_insert = nullptr;
 static HWND g_combo_insert = nullptr;
 static HFONT g_ui_font = nullptr;
 static bool g_ui_font_owned = false;
+static void LayoutChildControls(HWND hwnd);
 
 static HFONT CreateSystemMessageFont() {
     NONCLIENTMETRICSW ncm{};
@@ -1293,6 +1294,78 @@ static int GetUiTextHeight(HWND hwnd) {
     return text_h;
 }
 
+static void ResetUiFont() {
+    if (g_ui_font && g_ui_font_owned) {
+        DeleteObject(g_ui_font);
+    }
+    g_ui_font = nullptr;
+    g_ui_font_owned = false;
+}
+
+static std::wstring GetWindowTextCopy(HWND hwnd) {
+    if (!hwnd) return {};
+
+    int len = GetWindowTextLengthW(hwnd);
+    std::wstring text((len > 0 ? len : 0) + 1, L'\0');
+    int copied = GetWindowTextW(hwnd, text.data(), (int)text.size());
+    if (copied <= 0) return {};
+    text.resize(copied);
+    return text;
+}
+
+static int MeasureTextWidth(HWND hwnd, const std::wstring& text) {
+    if (!hwnd || text.empty()) return 0;
+
+    HDC hdc = GetDC(hwnd);
+    if (!hdc) return 0;
+
+    HFONT old = nullptr;
+    if (g_ui_font) old = (HFONT)SelectObject(hdc, g_ui_font);
+
+    SIZE sz{};
+    int width = 0;
+    if (GetTextExtentPoint32W(hdc, text.c_str(), (int)text.size(), &sz)) {
+        width = sz.cx;
+    }
+
+    if (old) SelectObject(hdc, old);
+    ReleaseDC(hwnd, hdc);
+    return width;
+}
+
+static int MeasureControlTextWidth(HWND hwnd) {
+    return MeasureTextWidth(hwnd, GetWindowTextCopy(hwnd));
+}
+
+static int MeasureComboMinWidth(HWND hwnd, UINT dpi) {
+    if (!hwnd) return MulDiv(90, (int)dpi, 96);
+
+    int max_width = MeasureControlTextWidth(hwnd);
+    LRESULT count = SendMessageW(hwnd, CB_GETCOUNT, 0, 0);
+    if (count != CB_ERR) {
+        for (LRESULT i = 0; i < count; ++i) {
+            LRESULT len = SendMessageW(hwnd, CB_GETLBTEXTLEN, (WPARAM)i, 0);
+            if (len == CB_ERR) continue;
+
+            std::wstring item((size_t)len + 1, L'\0');
+            LRESULT copied = SendMessageW(hwnd, CB_GETLBTEXT, (WPARAM)i, (LPARAM)item.data());
+            if (copied == CB_ERR || copied <= 0) continue;
+
+            item.resize((size_t)copied);
+            max_width = std::max(max_width, MeasureTextWidth(hwnd, item));
+        }
+    }
+
+    int combo_padding = MulDiv(38, (int)dpi, 96);
+    return std::max(max_width + combo_padding, MulDiv(90, (int)dpi, 96));
+}
+
+static void RefreshUiFontAndLayout(HWND hwnd) {
+    ResetUiFont();
+    ApplyUiFont(hwnd);
+    LayoutChildControls(hwnd);
+}
+
 static std::wstring NormalizeEditText(const std::wstring& text) {
     std::wstring out;
     out.reserve(text.size() + 16);
@@ -1342,14 +1415,15 @@ static void LayoutChildControls(HWND hwnd) {
     int margin = MulDiv(10, (int)dpi, 96);
     int gap = MulDiv(6, (int)dpi, 96);
     int row_h = text_h + MulDiv(10, (int)dpi, 96);
-    int label_w = MulDiv(50, (int)dpi, 96);
-    int combo_pref_w = MulDiv(120, (int)dpi, 96);
-    int combo_min_w = MulDiv(90, (int)dpi, 96);
-    int open_pref_w = MulDiv(170, (int)dpi, 96);
-    int open_min_w = MulDiv(120, (int)dpi, 96);
     int content_w = std::max(0, client_w - margin * 2);
-    int combo_w = std::min(combo_pref_w, std::max(combo_min_w, content_w / 3));
-    int open_w = std::min(open_pref_w, std::max(open_min_w, content_w / 3));
+    int button_pad_x = MulDiv(28, (int)dpi, 96);
+    int label_pad_x = MulDiv(6, (int)dpi, 96);
+    int label_w = std::max(MeasureControlTextWidth(g_label_insert) + label_pad_x, MulDiv(36, (int)dpi, 96));
+    int combo_min_w = MeasureComboMinWidth(g_combo_insert, dpi);
+    int combo_pref_w = std::max(combo_min_w, MulDiv(140, (int)dpi, 96));
+    int capture_min_w = std::max(MeasureControlTextWidth(g_btn_capture) + button_pad_x, MulDiv(180, (int)dpi, 96));
+    int run_min_w = std::max(MeasureControlTextWidth(g_btn_run) + button_pad_x, MulDiv(100, (int)dpi, 96));
+    int open_min_w = std::max(MeasureControlTextWidth(g_btn_open) + button_pad_x, MulDiv(140, (int)dpi, 96));
     int combo_drop_h = row_h * 8;
     int combo_window_h = row_h + combo_drop_h;
 
@@ -1357,33 +1431,71 @@ static void LayoutChildControls(HWND hwnd) {
     SendMessageW(g_combo_insert, CB_SETITEMHEIGHT, (WPARAM)0, (LPARAM)row_h);
 
     int y = margin;
-    int combo_x = std::max(margin, client_w - margin - combo_w);
-    int label_x = std::max(margin, combo_x - gap - label_w);
-    int capture_w = std::max(0, label_x - gap - margin);
-
     HDWP hdwp = BeginDeferWindowPos(8);
     if (!hdwp) return;
 
-    hdwp = DeferWindowPos(hdwp, g_btn_capture, nullptr, margin, y, capture_w, row_h,
-        SWP_NOZORDER | SWP_NOACTIVATE);
-    hdwp = DeferWindowPos(hdwp, g_label_insert, nullptr, label_x, y, label_w, row_h,
-        SWP_NOZORDER | SWP_NOACTIVATE);
-    hdwp = DeferWindowPos(hdwp, g_combo_insert, nullptr, combo_x, y, combo_w, combo_window_h,
-        SWP_NOZORDER | SWP_NOACTIVATE);
+    bool top_single_row = (capture_min_w + gap + label_w + gap + combo_min_w) <= content_w;
+    if (top_single_row) {
+        int combo_w = std::min(combo_pref_w, std::max(combo_min_w, content_w / 3));
+        combo_w = std::min(combo_w, std::max(combo_min_w, content_w - capture_min_w - label_w - gap * 2));
+        int capture_w = std::max(0, content_w - label_w - combo_w - gap * 2);
+        int label_x = margin + capture_w + gap;
+        int combo_x = label_x + label_w + gap;
 
-    y += row_h + gap;
+        hdwp = DeferWindowPos(hdwp, g_btn_capture, nullptr, margin, y, capture_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        hdwp = DeferWindowPos(hdwp, g_label_insert, nullptr, label_x, y, label_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        hdwp = DeferWindowPos(hdwp, g_combo_insert, nullptr, combo_x, y, combo_w, combo_window_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+    } else {
+        hdwp = DeferWindowPos(hdwp, g_btn_capture, nullptr, margin, y, content_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+
+        int combo_row_w = std::max(0, content_w - label_w - gap);
+        if (combo_row_w >= combo_min_w) {
+            hdwp = DeferWindowPos(hdwp, g_label_insert, nullptr, margin, y, label_w, row_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            hdwp = DeferWindowPos(hdwp, g_combo_insert, nullptr, margin + label_w + gap, y, combo_row_w, combo_window_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            y += row_h + gap;
+        } else {
+            hdwp = DeferWindowPos(hdwp, g_label_insert, nullptr, margin, y, content_w, row_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            y += row_h + gap;
+            hdwp = DeferWindowPos(hdwp, g_combo_insert, nullptr, margin, y, content_w, combo_window_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            y += row_h + gap;
+        }
+    }
+
     hdwp = DeferWindowPos(hdwp, g_edit_path, nullptr, margin, y, content_w, row_h,
         SWP_NOZORDER | SWP_NOACTIVATE);
 
     y += row_h + gap;
-    int open_x = std::max(margin, client_w - margin - open_w);
-    int run_w = std::max(0, open_x - gap - margin);
-    hdwp = DeferWindowPos(hdwp, g_btn_run, nullptr, margin, y, run_w, row_h,
-        SWP_NOZORDER | SWP_NOACTIVATE);
-    hdwp = DeferWindowPos(hdwp, g_btn_open, nullptr, open_x, y, open_w, row_h,
-        SWP_NOZORDER | SWP_NOACTIVATE);
+    bool action_single_row = (run_min_w + gap + open_min_w) <= content_w;
+    if (action_single_row) {
+        int open_pref_w = std::max(open_min_w, MulDiv(170, (int)dpi, 96));
+        int open_w = std::min(open_pref_w, std::max(open_min_w, content_w / 3));
+        open_w = std::min(open_w, std::max(open_min_w, content_w - run_min_w - gap));
+        int run_w = std::max(0, content_w - open_w - gap);
 
-    y += row_h + gap;
+        hdwp = DeferWindowPos(hdwp, g_btn_run, nullptr, margin, y, run_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        hdwp = DeferWindowPos(hdwp, g_btn_open, nullptr, margin + run_w + gap, y, open_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+    } else {
+        hdwp = DeferWindowPos(hdwp, g_btn_run, nullptr, margin, y, content_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+        hdwp = DeferWindowPos(hdwp, g_btn_open, nullptr, margin, y, content_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+    }
+
     hdwp = DeferWindowPos(hdwp, g_edit_job, nullptr, margin, y, content_w, row_h,
         SWP_NOZORDER | SWP_NOACTIVATE);
 
@@ -2236,13 +2348,12 @@ static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
 
     case WM_DPICHANGED:
     case WM_DPICHANGED_AFTERPARENT:
-        if (g_ui_font && g_ui_font_owned) {
-            DeleteObject(g_ui_font);
-        }
-        g_ui_font = nullptr;
-        g_ui_font_owned = false;
-        ApplyUiFont(hwnd);
-        LayoutChildControls(hwnd);
+        RefreshUiFontAndLayout(hwnd);
+        return 0;
+
+    case WM_SETTINGCHANGE:
+    case WM_FONTCHANGE:
+        RefreshUiFontAndLayout(hwnd);
         return 0;
 
     case WM_DESTROY:
@@ -2254,11 +2365,7 @@ static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             fs::path jd = g_last_job_dir;
             ForceKillChildProcessTree(jd, L"panel destroy");
         }
-        if (g_ui_font && g_ui_font_owned) {
-            DeleteObject(g_ui_font);
-        }
-        g_ui_font = nullptr;
-        g_ui_font_owned = false;
+        ResetUiFont();
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
