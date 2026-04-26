@@ -24,6 +24,10 @@
 #include <vector>
 #include <excpt.h>
 
+#ifndef WM_DPICHANGED_AFTERPARENT
+#define WM_DPICHANGED_AFTERPARENT 0x02E3
+#endif
+
 #include "aviutl2_sdk/plugin2.h" // SDK mirror の include/aviutl2_sdk/plugin2.h
 
 // ---- 簡易ユーティリティ ----
@@ -1227,17 +1231,22 @@ static HWND g_btn_open = nullptr;
 static HWND g_edit_path = nullptr;
 static HWND g_edit_job = nullptr;
 static HWND g_static_status = nullptr;
+static HWND g_label_insert = nullptr;
 static HWND g_combo_insert = nullptr;
 static HFONT g_ui_font = nullptr;
+static bool g_ui_font_owned = false;
+static void LayoutChildControls(HWND hwnd);
 
 static HFONT CreateSystemMessageFont() {
     NONCLIENTMETRICSW ncm{};
     ncm.cbSize = sizeof(ncm);
     if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0)) {
         // Windows の標準UIフォント（日本語環境なら Yu Gothic UI など）を使う
+        g_ui_font_owned = true;
         return CreateFontIndirectW(&ncm.lfMessageFont);
     }
     // フォールバック（Segoe UI / MS Shell Dlg 2 相当になりやすい）
+    g_ui_font_owned = false;
     return (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 }
 static BOOL CALLBACK EnumChildSetFontProc(HWND child, LPARAM lp) {
@@ -1251,6 +1260,282 @@ static void ApplyUiFont(HWND hwnd) {
     if (!g_ui_font) return;
     SendMessageW(hwnd, WM_SETFONT, (WPARAM)g_ui_font, (LPARAM)FALSE);
     EnumChildWindows(hwnd, EnumChildSetFontProc, (LPARAM)g_ui_font);
+}
+
+static UINT GetWindowDpiSafe(HWND hwnd) {
+    if (!hwnd) return 96;
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+        auto fn = reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(user32, "GetDpiForWindow"));
+        if (fn) {
+            UINT dpi = fn(hwnd);
+            if (dpi != 0) return dpi;
+        }
+    }
+    return 96;
+}
+
+static int GetUiTextHeight(HWND hwnd) {
+    HDC hdc = GetDC(hwnd);
+    if (!hdc) return 16;
+
+    HFONT old = nullptr;
+    if (g_ui_font) old = (HFONT)SelectObject(hdc, g_ui_font);
+
+    TEXTMETRICW tm{};
+    int text_h = 16;
+    if (GetTextMetricsW(hdc, &tm)) {
+        text_h = tm.tmHeight + tm.tmExternalLeading;
+    }
+
+    if (old) SelectObject(hdc, old);
+    ReleaseDC(hwnd, hdc);
+    return text_h;
+}
+
+static void ResetUiFont() {
+    if (g_ui_font && g_ui_font_owned) {
+        DeleteObject(g_ui_font);
+    }
+    g_ui_font = nullptr;
+    g_ui_font_owned = false;
+}
+
+static std::wstring GetWindowTextCopy(HWND hwnd) {
+    if (!hwnd) return {};
+
+    int len = GetWindowTextLengthW(hwnd);
+    std::wstring text((len > 0 ? len : 0) + 1, L'\0');
+    int copied = GetWindowTextW(hwnd, text.data(), (int)text.size());
+    if (copied <= 0) return {};
+    text.resize(copied);
+    return text;
+}
+
+static int MeasureTextWidth(HWND hwnd, const std::wstring& text) {
+    if (!hwnd || text.empty()) return 0;
+
+    HDC hdc = GetDC(hwnd);
+    if (!hdc) return 0;
+
+    HFONT old = nullptr;
+    if (g_ui_font) old = (HFONT)SelectObject(hdc, g_ui_font);
+
+    SIZE sz{};
+    int width = 0;
+    if (GetTextExtentPoint32W(hdc, text.c_str(), (int)text.size(), &sz)) {
+        width = sz.cx;
+    }
+
+    if (old) SelectObject(hdc, old);
+    ReleaseDC(hwnd, hdc);
+    return width;
+}
+
+static int MeasureControlTextWidth(HWND hwnd) {
+    return MeasureTextWidth(hwnd, GetWindowTextCopy(hwnd));
+}
+
+static int MeasureComboMinWidth(HWND hwnd, UINT dpi) {
+    if (!hwnd) return MulDiv(90, (int)dpi, 96);
+
+    int max_width = MeasureControlTextWidth(hwnd);
+    LRESULT count = SendMessageW(hwnd, CB_GETCOUNT, 0, 0);
+    if (count != CB_ERR) {
+        for (LRESULT i = 0; i < count; ++i) {
+            LRESULT len = SendMessageW(hwnd, CB_GETLBTEXTLEN, (WPARAM)i, 0);
+            if (len == CB_ERR) continue;
+
+            std::wstring item((size_t)len + 1, L'\0');
+            LRESULT copied = SendMessageW(hwnd, CB_GETLBTEXT, (WPARAM)i, (LPARAM)item.data());
+            if (copied == CB_ERR || copied <= 0) continue;
+
+            item.resize((size_t)copied);
+            max_width = std::max(max_width, MeasureTextWidth(hwnd, item));
+        }
+    }
+
+    int combo_padding = MulDiv(38, (int)dpi, 96);
+    return std::max(max_width + combo_padding, MulDiv(90, (int)dpi, 96));
+}
+
+static void RefreshUiFontAndLayout(HWND hwnd) {
+    ResetUiFont();
+    ApplyUiFont(hwnd);
+    LayoutChildControls(hwnd);
+}
+
+static std::wstring NormalizeEditText(const std::wstring& text) {
+    std::wstring out;
+    out.reserve(text.size() + 16);
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        wchar_t ch = text[i];
+        if (ch == L'\r') {
+            out += L'\r';
+            if (i + 1 < text.size() && text[i + 1] == L'\n') {
+                out += L'\n';
+                ++i;
+            } else {
+                out += L'\n';
+            }
+            continue;
+        }
+        if (ch == L'\n') {
+            out += L"\r\n";
+            continue;
+        }
+        out += ch;
+    }
+
+    return out;
+}
+
+static void ScrollStatusToEnd() {
+    if (!g_static_status) return;
+    SendMessageW(g_static_status, EM_SETSEL, (WPARAM)-1, (LPARAM)-1);
+    SendMessageW(g_static_status, EM_SCROLLCARET, 0, 0);
+}
+
+static void LayoutChildControls(HWND hwnd) {
+    if (!hwnd) return;
+    if (!g_btn_capture || !g_edit_path || !g_label_insert || !g_combo_insert ||
+        !g_btn_run || !g_edit_job || !g_btn_open || !g_static_status) {
+        return;
+    }
+
+    RECT rc{};
+    GetClientRect(hwnd, &rc);
+    int client_w = (rc.right > rc.left) ? (int)(rc.right - rc.left) : 0;
+    int client_h = (rc.bottom > rc.top) ? (int)(rc.bottom - rc.top) : 0;
+
+    UINT dpi = GetWindowDpiSafe(hwnd);
+    int text_h = GetUiTextHeight(hwnd);
+    int margin = MulDiv(10, (int)dpi, 96);
+    int gap = MulDiv(6, (int)dpi, 96);
+    int row_h = text_h + MulDiv(10, (int)dpi, 96);
+    int content_w = std::max(0, client_w - margin * 2);
+    int button_pad_x = MulDiv(28, (int)dpi, 96);
+    int label_pad_x = MulDiv(6, (int)dpi, 96);
+    int label_w = std::max(MeasureControlTextWidth(g_label_insert) + label_pad_x, MulDiv(36, (int)dpi, 96));
+    int combo_min_w = MeasureComboMinWidth(g_combo_insert, dpi);
+    int combo_pref_w = std::max(combo_min_w, MulDiv(140, (int)dpi, 96));
+    int capture_min_w = std::max(MeasureControlTextWidth(g_btn_capture) + button_pad_x, MulDiv(180, (int)dpi, 96));
+    int run_min_w = std::max(MeasureControlTextWidth(g_btn_run) + button_pad_x, MulDiv(100, (int)dpi, 96));
+    int open_min_w = std::max(MeasureControlTextWidth(g_btn_open) + button_pad_x, MulDiv(140, (int)dpi, 96));
+    int combo_drop_h = row_h * 8;
+    int combo_window_h = row_h + combo_drop_h;
+
+    SendMessageW(g_combo_insert, CB_SETITEMHEIGHT, (WPARAM)-1, (LPARAM)row_h);
+    SendMessageW(g_combo_insert, CB_SETITEMHEIGHT, (WPARAM)0, (LPARAM)row_h);
+
+    int y = margin;
+    HDWP hdwp = BeginDeferWindowPos(8);
+    if (!hdwp) return;
+
+    bool top_single_row = (capture_min_w + gap + label_w + gap + combo_min_w) <= content_w;
+    bool action_single_row = (run_min_w + gap + open_min_w) <= content_w;
+
+    int aligned_aux_w = 0;
+    bool use_aligned_single_row = false;
+    if (top_single_row && action_single_row) {
+        int top_combo_w = std::min(combo_pref_w, std::max(combo_min_w, content_w / 3));
+        top_combo_w = std::min(top_combo_w, std::max(combo_min_w, content_w - capture_min_w - label_w - gap * 2));
+        int top_aux_w = label_w + gap + top_combo_w;
+
+        int open_pref_w = std::max(open_min_w, MulDiv(170, (int)dpi, 96));
+        int open_w = std::min(open_pref_w, std::max(open_min_w, content_w / 3));
+        open_w = std::min(open_w, std::max(open_min_w, content_w - run_min_w - gap));
+
+        aligned_aux_w = std::max(top_aux_w, open_w);
+        int aligned_left_w = content_w - gap - aligned_aux_w;
+        use_aligned_single_row = (aligned_left_w >= capture_min_w) && (aligned_left_w >= run_min_w);
+    }
+
+    if (top_single_row) {
+        int combo_w = 0;
+        int capture_w = 0;
+        if (use_aligned_single_row) {
+            combo_w = std::max(combo_min_w, aligned_aux_w - label_w - gap);
+            capture_w = std::max(0, content_w - aligned_aux_w - gap);
+        } else {
+            combo_w = std::min(combo_pref_w, std::max(combo_min_w, content_w / 3));
+            combo_w = std::min(combo_w, std::max(combo_min_w, content_w - capture_min_w - label_w - gap * 2));
+            capture_w = std::max(0, content_w - label_w - combo_w - gap * 2);
+        }
+        int label_x = margin + capture_w + gap;
+        int combo_x = label_x + label_w + gap;
+
+        hdwp = DeferWindowPos(hdwp, g_btn_capture, nullptr, margin, y, capture_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        hdwp = DeferWindowPos(hdwp, g_label_insert, nullptr, label_x, y, label_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        hdwp = DeferWindowPos(hdwp, g_combo_insert, nullptr, combo_x, y, combo_w, combo_window_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+    } else {
+        hdwp = DeferWindowPos(hdwp, g_btn_capture, nullptr, margin, y, content_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+
+        int combo_row_w = std::max(0, content_w - label_w - gap);
+        if (combo_row_w >= combo_min_w) {
+            hdwp = DeferWindowPos(hdwp, g_label_insert, nullptr, margin, y, label_w, row_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            hdwp = DeferWindowPos(hdwp, g_combo_insert, nullptr, margin + label_w + gap, y, combo_row_w, combo_window_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            y += row_h + gap;
+        } else {
+            hdwp = DeferWindowPos(hdwp, g_label_insert, nullptr, margin, y, content_w, row_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            y += row_h + gap;
+            hdwp = DeferWindowPos(hdwp, g_combo_insert, nullptr, margin, y, content_w, combo_window_h,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            y += row_h + gap;
+        }
+    }
+
+    hdwp = DeferWindowPos(hdwp, g_edit_path, nullptr, margin, y, content_w, row_h,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+
+    y += row_h + gap;
+    if (action_single_row) {
+        int open_w = 0;
+        int run_w = 0;
+        if (use_aligned_single_row) {
+            open_w = aligned_aux_w;
+            run_w = std::max(0, content_w - open_w - gap);
+        } else {
+            int open_pref_w = std::max(open_min_w, MulDiv(170, (int)dpi, 96));
+            open_w = std::min(open_pref_w, std::max(open_min_w, content_w / 3));
+            open_w = std::min(open_w, std::max(open_min_w, content_w - run_min_w - gap));
+            run_w = std::max(0, content_w - open_w - gap);
+        }
+
+        hdwp = DeferWindowPos(hdwp, g_btn_run, nullptr, margin, y, run_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        hdwp = DeferWindowPos(hdwp, g_btn_open, nullptr, margin + run_w + gap, y, open_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+    } else {
+        hdwp = DeferWindowPos(hdwp, g_btn_run, nullptr, margin, y, content_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+        hdwp = DeferWindowPos(hdwp, g_btn_open, nullptr, margin, y, content_w, row_h,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        y += row_h + gap;
+    }
+
+    hdwp = DeferWindowPos(hdwp, g_edit_job, nullptr, margin, y, content_w, row_h,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+
+    y += row_h + gap;
+    int status_h = std::max(0, client_h - y - margin);
+    hdwp = DeferWindowPos(hdwp, g_static_status, nullptr, margin, y, content_w, status_h,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+
+    EndDeferWindowPos(hdwp);
 }
 
 static FocusVideoInfo g_last_focus{};
@@ -1475,7 +1760,7 @@ static std::string BuildRequestJsonV1(
     return ss.str();
 }
 
-static void UpdateUiText(HWND hwnd, const FocusVideoInfo& f, const fs::path& jobdir, const std::wstring& status) {
+static void UpdateUiText(HWND hwnd, const FocusVideoInfo& f, const fs::path& jobdir, const std::wstring& status, bool scroll_status_to_end = false) {
     if (g_edit_path) {
         SetWindowTextW(g_edit_path, f.source_video_path.empty() ? L"(source_video_path unresolved)" : f.source_video_path.c_str());
     }
@@ -1483,7 +1768,11 @@ static void UpdateUiText(HWND hwnd, const FocusVideoInfo& f, const fs::path& job
         SetWindowTextW(g_edit_job, jobdir.empty() ? L"" : jobdir.wstring().c_str());
     }
     if (g_static_status) {
-        SetWindowTextW(g_static_status, status.c_str());
+        std::wstring normalized = NormalizeEditText(status);
+        SetWindowTextW(g_static_status, normalized.c_str());
+        if (scroll_status_to_end) {
+            ScrollStatusToEnd();
+        }
     }
 }
 
@@ -1650,6 +1939,78 @@ static std::optional<std::wstring> ReadGradioUrlWithRetry(const fs::path& jobdir
     return std::nullopt;
 }
 
+struct FailureLogInfo {
+    fs::path path;
+    std::wstring tail_text;
+};
+
+static std::wstring ReadUtf8TailLines(const fs::path& path, size_t max_lines) {
+    auto text = ReadAllText(path);
+    if (!text) return {};
+
+    std::vector<std::string> lines;
+    std::string line;
+    std::istringstream iss(*text);
+    while (std::getline(iss, line)) {
+        RStripCR(line);
+        lines.push_back(line);
+    }
+
+    if (lines.empty()) return {};
+
+    size_t start = 0;
+    if (lines.size() > max_lines) {
+        start = lines.size() - max_lines;
+    }
+
+    std::wstring out;
+    for (size_t i = start; i < lines.size(); ++i) {
+        out += Utf8ToWide(lines[i]);
+        if (i + 1 < lines.size()) out += L'\n';
+    }
+    return out;
+}
+
+static std::optional<FailureLogInfo> ReadFailureLogInfo(const fs::path& jobdir, size_t max_lines = 30) {
+    if (jobdir.empty()) return std::nullopt;
+
+    const wchar_t* candidates[] = {
+        L"python.log.txt",
+        L"python.stderr.txt",
+        L"launcher.log.txt",
+    };
+
+    for (const auto* name : candidates) {
+        fs::path path = jobdir / name;
+        if (!fs::exists(path)) continue;
+
+        FailureLogInfo info;
+        info.path = path;
+        info.tail_text = ReadUtf8TailLines(path, max_lines);
+        return info;
+    }
+
+    return std::nullopt;
+}
+
+static void AppendFailureDetails(std::wstring& ui, const fs::path& jobdir) {
+    ui += L"\nDetails:";
+    if (!jobdir.empty()) {
+        ui += L"\njobdir=" + jobdir.wstring();
+    }
+
+    if (auto info = ReadFailureLogInfo(jobdir)) {
+        ui += L"\nlog=" + info->path.wstring();
+        if (!info->tail_text.empty()) {
+            ui += L"\n---- log tail ----\n";
+            ui += info->tail_text;
+        }
+        return;
+    }
+
+    ui += L"\nlog=(not found)";
+}
+
 
 // ---- status/result ポーリング ----
 static void PollJobFiles() {
@@ -1667,8 +2028,9 @@ static void PollJobFiles() {
             if (!fs::exists(resultp)) {
                 ui += L"[poll] Python process exited before result.json was created.\n";
                 ui += L"exit_code=" + std::to_wstring(ec) + L"\n";
-                ui += L"check: python.stdout.txt / python.stderr.txt";
-                UpdateUiText(g_hwnd, g_last_focus, g_last_job_dir, ui);
+                ui += L"check: python.log.txt";
+                AppendFailureDetails(ui, g_last_job_dir);
+                UpdateUiText(g_hwnd, g_last_focus, g_last_job_dir, ui, true);
                 StopPollingTimer(g_hwnd);
                 CleanupChildProcessAfterJobDone(g_last_job_dir);
                 return;
@@ -1814,8 +2176,9 @@ static void PollJobFiles() {
         if (success && !*success) {
             ui += L"\nresult: success=false";
             if (err && !err->empty()) ui += L"\nerror=" + Utf8ToWide(*err);
+            AppendFailureDetails(ui, g_last_job_dir);
 
-            UpdateUiText(g_hwnd, g_last_focus, g_last_job_dir, ui);
+            UpdateUiText(g_hwnd, g_last_focus, g_last_job_dir, ui, true);
 
             // Job done (failed): stop polling and cleanup python handles/process.
             StopPollingTimer(g_hwnd);
@@ -1849,7 +2212,7 @@ static void CreateChildControls(HWND hwnd) {
     g_edit_path = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | ES_READONLY,
         10, 44, 520, 24, hwnd, (HMENU)1002, g_hmod, nullptr);
 
-    CreateWindowW(L"STATIC", L"挿入:", WS_CHILD | WS_VISIBLE,
+    g_label_insert = CreateWindowW(L"STATIC", L"挿入:", WS_CHILD | WS_VISIBLE,
         240, 12, 50, 22, hwnd, (HMENU)1101, g_hmod, nullptr);
 
     g_combo_insert = CreateWindowW(L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
@@ -1872,8 +2235,9 @@ static void CreateChildControls(HWND hwnd) {
     g_btn_open = CreateWindowW(L"BUTTON", L"切り抜き画面を開く", WS_CHILD | WS_VISIBLE,
         240, 76, 140, 28, hwnd, (HMENU)1005, g_hmod, nullptr);
 
-    g_static_status = CreateWindowW(L"STATIC", L"Status: 待機中", WS_CHILD | WS_VISIBLE,
-        10, 142, 520, 42, hwnd, (HMENU)1006, g_hmod, nullptr);
+    g_static_status = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Status: 待機中",
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
+        10, 142, 520, 96, hwnd, (HMENU)1006, g_hmod, nullptr);
 }
 
 
@@ -1882,6 +2246,7 @@ static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
     case WM_CREATE:
         CreateChildControls(hwnd);
         ApplyUiFont(hwnd);
+        LayoutChildControls(hwnd);
         return 0;
 
     case WM_ERASEBKGND: {
@@ -2008,6 +2373,20 @@ static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
         }
         return 0;
 
+    case WM_SIZE:
+        LayoutChildControls(hwnd);
+        return 0;
+
+    case WM_DPICHANGED:
+    case WM_DPICHANGED_AFTERPARENT:
+        RefreshUiFontAndLayout(hwnd);
+        return 0;
+
+    case WM_SETTINGCHANGE:
+    case WM_FONTCHANGE:
+        RefreshUiFontAndLayout(hwnd);
+        return 0;
+
     case WM_DESTROY:
         // stop polling first
         StopPollingTimer(hwnd);
@@ -2017,10 +2396,7 @@ static LRESULT CALLBACK PanelWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             fs::path jd = g_last_job_dir;
             ForceKillChildProcessTree(jd, L"panel destroy");
         }
-        if (g_ui_font) {
-            DeleteObject(g_ui_font);
-            g_ui_font = nullptr;
-        }
+        ResetUiFont();
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -2056,7 +2432,7 @@ static HWND CreatePanelWindow() {
         kClassName,
         L"SAM3",
         style,
-        CW_USEDEFAULT, CW_USEDEFAULT, 560, 220,
+        CW_USEDEFAULT, CW_USEDEFAULT, 640, 320,
         nullptr, nullptr,
         g_hmod,
         nullptr
