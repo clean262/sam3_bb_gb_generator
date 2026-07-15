@@ -34,15 +34,6 @@ wheels = [
 ]
 
 [[package]]
-name = "aiofiles"
-version = "24.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0b/03/a88171e277e8caa88a4c77808c20ebb04ba74cc4681bf1e9416c862de237/aiofiles-24.1.0.tar.gz", hash = "sha256:22a075c9e5a3810f0c2e48f3008c94d68c65d763b9b03857924c99e57355166c", size = 30247, upload-time = "2024-06-24T11:02:03.584Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/45/30bb92d442636f570cb5651bc661f52b610e2eec3f891a5dc3a4c3667db0/aiofiles-24.1.0-py3-none-any.whl", hash = "sha256:b4ec55f4195e3eb5d7abd1bf7e061763e864dd4954231fb8539a0ef8bb8260e5", size = 15896, upload-time = "2024-06-24T11:02:01.529Z" },
-]
-
-[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -337,15 +328,6 @@ wheels = [
 ]
 
 [[package]]
-name = "ffmpy"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/7d/d2/1c4c582d71bcc65c76fa69fab85de6257d50fdf6fd4a2317c53917e9a581/ffmpy-1.0.0.tar.gz", hash = "sha256:b12932e95435c8820f1cd041024402765f821971e4bae753b327fc02a6e12f8b", size = 5101, upload-time = "2025-11-11T06:24:23.856Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/56/dd3669eccebb6d8ac81e624542ebd53fe6f08e1b8f2f8d50aeb7e3b83f99/ffmpy-1.0.0-py3-none-any.whl", hash = "sha256:5640e5f0fd03fb6236d0e119b16ccf6522db1c826fdf35dcb87087b60fd7504f", size = 5614, upload-time = "2025-11-11T06:24:22.818Z" },
-]
-
-[[package]]
 name = "filelock"
 version = "3.24.2"
 source = { registry = "https://pypi.org/simple" }
@@ -365,17 +347,16 @@ wheels = [
 
 [[package]]
 name = "gradio"
-version = "6.6.0"
+version = "6.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiofiles" },
     { name = "anyio" },
     { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
     { name = "brotli" },
     { name = "fastapi" },
-    { name = "ffmpy" },
     { name = "gradio-client" },
     { name = "groovy" },
+    { name = "hf-gradio" },
     { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "jinja2" },
@@ -400,14 +381,14 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/11/f8/81a453b139935b70bf54efd1f4ce2be9be491ab638d907d0a94fd73af1a0/gradio-6.6.0.tar.gz", hash = "sha256:1c6c76dcc725a32c2a9e2b8732db935513c519694f9f9e2472a4e2ecc0075539", size = 40104446, upload-time = "2026-02-17T22:33:00.671Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/7a/edc719d67beea0963721a7f552604faa0feaf218d4a51c6e0dacfb51ba6a/gradio-6.15.1.tar.gz", hash = "sha256:58be31be7b3aab53bbe61f21c20666b4a8a25a6737c399e02b7463d669625851", size = 36429761, upload-time = "2026-05-27T13:20:35.232Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/1b/2c79424d17bd2240c5292597f81c5def69b3e8ae35eaa6f86ca783d21118/gradio-6.6.0-py3-none-any.whl", hash = "sha256:c6ed21ecb757dca5cce1d074e4cae5cf3e72ca98ea00cbcd4fda62a7880ac4e0", size = 24150475, upload-time = "2026-02-17T22:32:57.131Z" },
+    { url = "https://files.pythonhosted.org/packages/00/87/b6d08b4b0a5bf7bb219c4c44d1d267ce6dfbc1ff062ca05ce251a50d18a5/gradio-6.15.1-py3-none-any.whl", hash = "sha256:f4f50488f8da1137b8e0d65fe656348b11bac3cd2f5ccab60636eb45e5a6f39f", size = 20093799, upload-time = "2026-05-27T13:20:31.18Z" },
 ]
 
 [[package]]
 name = "gradio-client"
-version = "2.1.0"
+version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
@@ -416,9 +397,9 @@ dependencies = [
     { name = "packaging" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/b2/3ce826ddf275677324970ea09357d6854b2a09a8b85f4e0050c38ae3888e/gradio_client-2.1.0.tar.gz", hash = "sha256:779c2e53ebbeea92cb3c3945c37d75ae2b6464995b8e435dd7df1a769934df54", size = 55369, upload-time = "2026-02-17T22:33:11.937Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/e6/6b6029f5fe2ad7f1211105d530e34d991014c2cae463f9223033031cfc4f/gradio_client-2.5.0.tar.gz", hash = "sha256:4cde99bad62149595c30c90876ca2e405e3a13687ecf895474f3412cb476673d", size = 59013, upload-time = "2026-04-20T23:16:21.518Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/c0/dbb8a7b9b6291b81d5d95057c81d555bdd189889d4a0f22e4da2b87561f5/gradio_client-2.1.0-py3-none-any.whl", hash = "sha256:40cdf3bae609e1ba95da4b97156748f752feb183323b5d2847f96483147cbccf", size = 55989, upload-time = "2026-02-17T22:33:10.321Z" },
+    { url = "https://files.pythonhosted.org/packages/78/81/0a861b8e1ff42960139c6cd4c7dd591292fa09ea1ae2d87677441cba4c00/gradio_client-2.5.0-py3-none-any.whl", hash = "sha256:d43e2179c29076292a76485ad7ed2e6eaa19d14ac58283bd7f5beabfe4ca958c", size = 59952, upload-time = "2026-04-20T23:16:20.186Z" },
 ]
 
 [[package]]
@@ -437,6 +418,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
+]
+
+[[package]]
+name = "hf-gradio"
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "gradio-client" },
+    { name = "typer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/86/c9694b7cfada5780e75769e60dc161a161f4dd7fc91b61db5e3a3338bef9/hf_gradio-0.4.1.tar.gz", hash = "sha256:a017d942618f0d495a58ee4563047fa04bef614c00e0cb789a9a6d0633cffa7b", size = 6560, upload-time = "2026-04-22T14:01:32.334Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/30/2d/afff2ee87e75d8eb85c92bb8cf0e15b05c23c2ebd8fd8dec781d8601ed7f/hf_gradio-0.4.1-py3-none-any.whl", hash = "sha256:76b8cb8be6abe62d74c1ad2d35b42f0629db89aa9e1a8d033cecfe7c856eeab3", size = 4482, upload-time = "2026-04-17T19:53:31.827Z" },
 ]
 
 [[package]]
@@ -1665,7 +1659,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = ">=1.11.0" },
-    { name = "gradio", specifier = ">=5.49.1" },
+    { name = "gradio", specifier = ">=6.15.1" },
     { name = "imageio", extras = ["pyav"], specifier = ">=2.37.2" },
     { name = "imageio-ffmpeg", specifier = ">=0.6.0" },
     { name = "kernels", specifier = ">=0.11.0" },
@@ -1900,16 +1894,16 @@ dependencies = [
     { name = "typing-extensions", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:0c96999d15cf1f13dd7c913e0b21a9a355538e6cfc10861a17158320292f5954" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp310-cp310-win_amd64.whl", hash = "sha256:43938e9a174c90e5eb9e906532b2f1e21532bbfa5a61b65193b4f54714d34f9e" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:34c55443aafd31046a7963b63d30bc3b628ee4a704f826796c865fdfd05bb596" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4354fc05bb79b208d6995a04ca1ceef6a9547b1c4334435574353d381c55087c" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:0ad925202387f4e7314302a1b4f8860fa824357f9b1466d7992bf276370ebcff" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:3a852369a38dec343d45ecd0bc3660f79b88a23e0c878d18707f7c13bf49538f" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313-win_amd64.whl", hash = "sha256:9e20646802b7fc295c1f8b45fefcfc9fb2e4ec9cbe8593443cd2b9cc307c8405" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:4295a22d69408e93d25f51e8d5d579345b6b802383e9414b0f3853ed433d53ae" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313t-win_amd64.whl", hash = "sha256:970b4f4661fa7b44f6a7e6df65de7fc4a6fff2af610dc415c1d695ca5f1f37d2" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:0c96999d15cf1f13dd7c913e0b21a9a355538e6cfc10861a17158320292f5954", upload-time = "2025-10-01T23:47:19Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp310-cp310-win_amd64.whl", hash = "sha256:43938e9a174c90e5eb9e906532b2f1e21532bbfa5a61b65193b4f54714d34f9e", upload-time = "2025-10-01T23:47:42Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed", upload-time = "2025-10-01T23:49:06Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:34c55443aafd31046a7963b63d30bc3b628ee4a704f826796c865fdfd05bb596", upload-time = "2025-10-01T23:49:30Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4354fc05bb79b208d6995a04ca1ceef6a9547b1c4334435574353d381c55087c", upload-time = "2025-10-01T23:51:02Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:0ad925202387f4e7314302a1b4f8860fa824357f9b1466d7992bf276370ebcff", upload-time = "2025-10-01T23:51:26Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:3a852369a38dec343d45ecd0bc3660f79b88a23e0c878d18707f7c13bf49538f", upload-time = "2025-10-01T23:52:56Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313-win_amd64.whl", hash = "sha256:9e20646802b7fc295c1f8b45fefcfc9fb2e4ec9cbe8593443cd2b9cc307c8405", upload-time = "2025-10-01T23:53:20Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:4295a22d69408e93d25f51e8d5d579345b6b802383e9414b0f3853ed433d53ae", upload-time = "2025-10-01T23:54:56Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp313-cp313t-win_amd64.whl", hash = "sha256:970b4f4661fa7b44f6a7e6df65de7fc4a6fff2af610dc415c1d695ca5f1f37d2", upload-time = "2025-10-01T23:55:23Z" },
 ]
 
 [[package]]
@@ -1954,16 +1948,16 @@ dependencies = [
     { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:460bc8d70f63bdb433a7351decc2c1ae1903f7f378e4a7614fc8e8c97a5c36aa" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp310-cp310-win_amd64.whl", hash = "sha256:8ec6f2281ef5d52471b01b99eb04243d0c2cccb1972ba43217085025fe5a6c3f" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:93f1b5f56b20cd6869bca40943de4fd3ca9ccc56e1b57f47c671de1cdab39cdb" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:70b3d8bfe04438006ec880c162b0e3aaac90c48b759aa41638dd714c732b182c" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9cb3c13997afcb44057ca10d943c6c4cba3068afde0f370965abce9c89fcffa9" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:20fa9c7362a006776630b00b8a01919fedcf504a202b81358d32c5aef39956fe" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:c63982f1973ba677b37e6663df0e07cb5381459b6f0572c2ca95eebd8dfeb742" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313-win_amd64.whl", hash = "sha256:f69174bc69474bd4d1405bac3ebd35bb39c8267ce6b8a406070cb3149c72e3b8" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:0d6ff6489eb71e4c0bb08cf7cb253298c2520458b1bd67036733652acfa87f00" },
-    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313t-win_amd64.whl", hash = "sha256:91fd897fb6fefaf25ec56897391b448eff73f28a7e2ab7660886ece85c865ec6" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:460bc8d70f63bdb433a7351decc2c1ae1903f7f378e4a7614fc8e8c97a5c36aa", upload-time = "2025-08-05T20:11:51Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp310-cp310-win_amd64.whl", hash = "sha256:8ec6f2281ef5d52471b01b99eb04243d0c2cccb1972ba43217085025fe5a6c3f", upload-time = "2025-08-05T20:11:51Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:93f1b5f56b20cd6869bca40943de4fd3ca9ccc56e1b57f47c671de1cdab39cdb", upload-time = "2025-08-05T20:11:52Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:70b3d8bfe04438006ec880c162b0e3aaac90c48b759aa41638dd714c732b182c", upload-time = "2025-08-05T20:11:51Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9cb3c13997afcb44057ca10d943c6c4cba3068afde0f370965abce9c89fcffa9", upload-time = "2025-08-05T20:11:52Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:20fa9c7362a006776630b00b8a01919fedcf504a202b81358d32c5aef39956fe", upload-time = "2025-08-05T20:11:51Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:c63982f1973ba677b37e6663df0e07cb5381459b6f0572c2ca95eebd8dfeb742", upload-time = "2025-08-05T20:11:52Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313-win_amd64.whl", hash = "sha256:f69174bc69474bd4d1405bac3ebd35bb39c8267ce6b8a406070cb3149c72e3b8", upload-time = "2025-08-05T20:11:51Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:0d6ff6489eb71e4c0bb08cf7cb253298c2520458b1bd67036733652acfa87f00", upload-time = "2025-08-05T20:11:52Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp313-cp313t-win_amd64.whl", hash = "sha256:91fd897fb6fefaf25ec56897391b448eff73f28a7e2ab7660886ece85c865ec6", upload-time = "2025-08-05T20:11:52Z" },
 ]
 
 [[package]]

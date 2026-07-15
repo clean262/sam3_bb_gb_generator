@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "accelerate>=1.11.0",
-    "gradio>=5.49.1",
+    "gradio>=6.15.1",
     "imageio-ffmpeg>=0.6.0",
     "imageio[pyav]>=2.37.2",
     "kernels>=0.11.0",
